@@ -1,0 +1,16 @@
+full name is first and last
+
+
+
+
+I have the keys already in .env, Let us use Redis then, You can create the seed later, keep the tags flexible but it should definately work well for what we plan to build sha, the trending should be from the api, FOr the price comparison we will use all the 3 api's, Then for the currency let us have multi-currency support but i think NGN is the primary one we want to have sha
+
+
+
+
+
+Ok do it sha... Like i said make it clean and modular and MVP friendly that is easy to read also
+
+
+
+

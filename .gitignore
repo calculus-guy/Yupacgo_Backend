@@ -5,3 +5,5 @@ dist
 .vscode
 coverage
 logs
+
+*.md

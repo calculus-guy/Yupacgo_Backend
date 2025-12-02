@@ -1,5 +1,7 @@
 const Onboarding = require("../models/onboarding.models");
 const User = require("../models/user.models");
+const UserProfile = require("../models/userProfile.models");
+const { computeProfile } = require("../services/profileCalculator.service");
 
 exports.saveOnboarding = async (req, res) => {
     try {
@@ -18,6 +20,7 @@ exports.saveOnboarding = async (req, res) => {
         if (!goal || !risk || !duration || !budget || !experience || !approach)
             return res.json({ status: "error", message: "Missing required fields" });
 
+        // Save or update onboarding data
         let record = await Onboarding.findOne({ userId });
 
         if (record) {
@@ -44,10 +47,37 @@ exports.saveOnboarding = async (req, res) => {
             await User.findByIdAndUpdate(userId, { onboarding: record._id });
         }
 
+        // Compute investor profile from onboarding data
+        const profileData = computeProfile({
+            goal,
+            risk,
+            duration,
+            budget,
+            interest,
+            experience,
+            approach
+        });
+
+        // Save or update user profile
+        let profile = await UserProfile.findOne({ userId });
+
+        if (profile) {
+            Object.assign(profile, profileData);
+            await profile.save();
+        } else {
+            profile = await UserProfile.create({
+                userId,
+                ...profileData
+            });
+        }
+
         return res.json({
             status: "success",
-            message: "Onboarding saved",
-            data: record
+            message: "Onboarding saved and profile computed",
+            data: {
+                onboarding: record,
+                profile: profile
+            }
         });
     } catch (error) {
         return res.status(500).json({ status: "error", message: error.message });

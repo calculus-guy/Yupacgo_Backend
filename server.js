@@ -5,6 +5,7 @@ const connectDB = require("./src/config/db");
 
 const authRoutes = require("./src/routes/auth.routes");
 const onboardingRoutes = require("./src/routes/onboarding.routes");
+const profileRoutes = require("./src/routes/profile.routes");
 
 const app = express();
 
@@ -15,6 +16,7 @@ connectDB();
 
 app.use("/api/auth", authRoutes);
 app.use("/api/onboarding", onboardingRoutes);
+app.use("/api/profile", profileRoutes);
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

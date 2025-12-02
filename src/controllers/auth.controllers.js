@@ -4,9 +4,9 @@ const jwt = require("jsonwebtoken");
 
 exports.signup = async (req, res) => {
     try {
-        const { fullname, email, password } = req.body;
+        const { firstname, lastname, email, password } = req.body;
 
-        if (!fullname || !email || !password)
+        if (!firstname || !lastname || !email || !password)
             return res.json({ status: "error", message: "All fields required" });
 
         const existing = await User.findOne({ email });
@@ -16,7 +16,8 @@ exports.signup = async (req, res) => {
         const hashed = await bcrypt.hash(password, 10);
 
         const user = await User.create({
-            fullname,
+            firstname,
+            lastname,
             email,
             password: hashed
         });
@@ -24,7 +25,7 @@ exports.signup = async (req, res) => {
         return res.json({
             status: "success",
             message: "Signup successful",
-            data: { id: user._id, fullname, email }
+            data: { id: user._id, firstname, lastname, email }
         });
     } catch (error) {
         return res.status(500).json({ status: "error", message: error.message });
@@ -53,7 +54,7 @@ exports.login = async (req, res) => {
             status: "success",
             message: "Login successful",
             token,
-            data: { id: user._id, fullname: user.fullname, email }
+            data: { id: user._id, firstname: user.firstname, lastname: user.lastname, email, role: user.role }
         });
     } catch (error) {
         return res.status(500).json({ status: "error", message: error.message });
