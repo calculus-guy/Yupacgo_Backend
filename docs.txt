@@ -3,7 +3,10 @@ full name is first and last
 
 
 
-I have the keys already in .env, Let us use Redis then, You can create the seed later, keep the tags flexible but it should definately work well for what we plan to build sha, the trending should be from the api, FOr the price comparison we will use all the 3 api's, Then for the currency let us have multi-currency support but i think NGN is the primary one we want to have sha
+I have the keys already in .env this is it incase u need the key word for process.env, FINNHUB_API_KEY=d4briq1r01qoua317upgd4briq1r01qoua317uq0
+ALPHAVANTAGE_API_KEY=L3VLAC9L60TKB2RS
+TWELVEDATA_API_KEY=34314e4a0b414bc786dc6f177d34a604
+, Let us use Redis then we need cache sha cause most of the API will only allow like 8 request per minute or like low amount sha, we need to be wise, You can create the seed later, keep the tags flexible but it should definately work well for what we plan to build sha, the trending should be from the api, FOr the price comparison we will use all the 3 api's, Then for the currency let us have multi-currency support but i think NGN is the primary one we want to have sha
 
 
 
@@ -14,3 +17,4 @@ Ok do it sha... Like i said make it clean and modular and MVP friendly that is e
 
 
 
+git rm --cached *.md     To remove the .md
