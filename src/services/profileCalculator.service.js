@@ -1,3 +1,8 @@
+/**
+ * Profile Calculator Service - Enhanced Version
+ * Converts onboarding answers into computed investor profile
+ * with goal-based constraints, budget constraints, and diversification levels
+ */
 
 /**
  * Calculate risk score from onboarding data
@@ -52,6 +57,158 @@ function calculateRiskScore(onboardingData) {
         riskScore: parseFloat(totalRiskScore.toFixed(2)),
         riskLevel
     };
+}
+
+/**
+ * Compute goal-based investment constraints
+ * Different goals require different investment strategies
+ * @param {String} goal - User's financial goal
+ * @param {String} duration - Investment duration
+ * @returns {Object} Goal constraints
+ */
+function computeGoalConstraints(goal, duration) {
+    const constraints = {
+        retirement: {
+            minDiversification: 8,
+            preferDividends: true,
+            avoidHighVolatility: true,
+            preferStableGrowth: true,
+            recommendETFs: true,
+            liquidityPriority: "low"
+        },
+        education: {
+            minDiversification: 5,
+            preferGrowth: true,
+            liquidityImportant: true,
+            avoidLongLockup: true,
+            recommendETFs: true,
+            liquidityPriority: "medium"
+        },
+        short_term: {
+            minDiversification: 3,
+            preferLiquidity: true,
+            avoidLongLockup: true,
+            avoidHighVolatility: true,
+            recommendETFs: false,
+            liquidityPriority: "high"
+        },
+        long_term: {
+            minDiversification: 6,
+            preferGrowth: true,
+            canHandleVolatility: true,
+            preferCompounding: true,
+            recommendETFs: true,
+            liquidityPriority: "low"
+        },
+        preserve: {
+            minDiversification: 10,
+            preferStable: true,
+            avoidVolatility: true,
+            preferDividends: true,
+            recommendETFs: true,
+            liquidityPriority: "medium"
+        }
+    };
+
+    return constraints[goal] || constraints.long_term;
+}
+
+/**
+ * Compute budget-based investment constraints
+ * Budget affects position sizing, stock selection, and fractional share recommendations
+ * @param {String} budget - User's monthly budget (low/medium/high)
+ * @returns {Object} Budget constraints
+ */
+function computeBudgetConstraints(budget) {
+    const constraints = {
+        low: {
+            maxStockPrice: 50000,        // ₦50k per share max (or $50 for US stocks)
+            preferFractional: true,
+            minPositionSize: 5000,       // ₦5k minimum
+            recommendETFs: true,
+            maxPositionsCount: 5,        // Limit to 5 positions
+            budgetLevel: "low"
+        },
+        medium: {
+            maxStockPrice: 200000,       // ₦200k per share max
+            preferFractional: false,
+            minPositionSize: 20000,      // ₦20k minimum
+            recommendETFs: true,
+            maxPositionsCount: 10,
+            budgetLevel: "medium"
+        },
+        high: {
+            maxStockPrice: null,         // No limit
+            preferFractional: false,
+            minPositionSize: 100000,     // ₦100k minimum
+            recommendETFs: false,        // Can buy individual stocks
+            maxPositionsCount: 20,
+            budgetLevel: "high"
+        }
+    };
+
+    return constraints[budget] || constraints.medium;
+}
+
+/**
+ * Compute diversification level based on risk profile
+ * @param {String} riskLevel - Conservative/Balanced/Aggressive
+ * @param {String} experience - User's experience level
+ * @returns {Object} Diversification settings
+ */
+function computeDiversificationLevel(riskLevel, experience) {
+    const levels = {
+        Conservative: {
+            level: "high",
+            minAssets: 8,
+            maxAssets: 15,
+            description: "Highly diversified across sectors and asset types"
+        },
+        Balanced: {
+            level: "medium",
+            minAssets: 5,
+            maxAssets: 10,
+            description: "Moderately diversified with focus on key sectors"
+        },
+        Aggressive: {
+            level: "low",
+            minAssets: 3,
+            maxAssets: 7,
+            description: "Concentrated positions in high-conviction picks"
+        }
+    };
+
+    const baseLevel = levels[riskLevel] || levels.Balanced;
+
+    // Beginners should have more diversification regardless of risk level
+    if (experience === "beginner") {
+        baseLevel.minAssets = Math.max(baseLevel.minAssets, 6);
+    }
+
+    return baseLevel;
+}
+
+/**
+ * Compute rebalancing frequency based on approach
+ * @param {String} approach - passive/active
+ * @param {String} riskLevel - Conservative/Balanced/Aggressive
+ * @returns {Object} Rebalancing settings
+ */
+function computeRebalancingFrequency(approach, riskLevel) {
+    const frequencies = {
+        passive: {
+            Conservative: { frequency: "quarterly", days: 90 },
+            Balanced: { frequency: "monthly", days: 30 },
+            Aggressive: { frequency: "monthly", days: 30 }
+        },
+        active: {
+            Conservative: { frequency: "monthly", days: 30 },
+            Balanced: { frequency: "bi-weekly", days: 14 },
+            Aggressive: { frequency: "weekly", days: 7 }
+        }
+    };
+
+    return frequencies[approach]?.[riskLevel] || { frequency: "monthly", days: 30 };
 }
 
 /**
@@ -131,6 +288,7 @@ function generateProfileType(riskLevel, investmentHorizon) {
 
 /**
  * Main function: Compute full investor profile from onboarding data
+ * Enhanced with goal constraints, budget constraints, and diversification
  * @param {Object} onboardingData - Raw onboarding answers
  * @returns {Object} Computed profile object
  */
@@ -144,7 +302,14 @@ function computeProfile(onboardingData) {
     const preferredSectors = mapPreferredSectors(onboardingData.interest);
     const profileType = generateProfileType(riskLevel, investmentHorizon);
 
+    // Compute advanced constraints
+    const goalConstraints = computeGoalConstraints(onboardingData.goal, onboardingData.duration);
+    const budgetConstraints = computeBudgetConstraints(onboardingData.budget);
+    const diversificationLevel = computeDiversificationLevel(riskLevel, onboardingData.experience);
+    const rebalancingFrequency = computeRebalancingFrequency(onboardingData.approach, riskLevel);
+
     return {
+        // Core profile data
         riskScore,
         riskLevel,
         experienceLevel,
@@ -153,13 +318,23 @@ function computeProfile(onboardingData) {
         preferredSectors,
         monthlyBudget: onboardingData.budget,
         approach: onboardingData.approach,
-        profileType
+        profileType,
+
+        // Advanced constraints for recommendation engine
+        goalConstraints,
+        budgetConstraints,
+        diversificationLevel,
+        rebalancingFrequency
     };
 }
 
 module.exports = {
     computeProfile,
     calculateRiskScore,
+    computeGoalConstraints,
+    computeBudgetConstraints,
+    computeDiversificationLevel,
+    computeRebalancingFrequency,
     mapExperienceLevel,
     mapInvestmentHorizon,
     mapPreferredSectors,

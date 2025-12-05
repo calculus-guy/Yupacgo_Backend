@@ -56,6 +56,44 @@ const UserProfileSchema = new mongoose.Schema(
         profileType: {
             type: String,
             required: true
+        },
+
+        goalConstraints: {
+            minDiversification: Number,
+            preferDividends: Boolean,
+            avoidHighVolatility: Boolean,
+            preferStableGrowth: Boolean,
+            preferGrowth: Boolean,
+            liquidityImportant: Boolean,
+            avoidLongLockup: Boolean,
+            preferLiquidity: Boolean,
+            canHandleVolatility: Boolean,
+            preferCompounding: Boolean,
+            preferStable: Boolean,
+            avoidVolatility: Boolean,
+            recommendETFs: Boolean,
+            liquidityPriority: String
+        },
+
+        budgetConstraints: {
+            maxStockPrice: Number,
+            preferFractional: Boolean,
+            minPositionSize: Number,
+            recommendETFs: Boolean,
+            maxPositionsCount: Number,
+            budgetLevel: String
+        },
+
+        diversificationLevel: {
+            level: String,
+            minAssets: Number,
+            maxAssets: Number,
+            description: String
+        },
+
+        rebalancingFrequency: {
+            frequency: String,
+            days: Number
         }
     },
     { timestamps: true }
