@@ -175,11 +175,32 @@ class FinnhubAdapter extends BaseAdapter {
                 ? new Date(rawData.timestamp * 1000).toISOString()
                 : new Date().toISOString(),
             detailUrl: `https://finnhub.io/quote/${rawData.symbol}`,
+            buyLinks: this.generateBuyLinks(rawData.symbol),
             marketCap: null,
             high: rawData.high,
             low: rawData.low,
             open: rawData.open,
             previousClose: rawData.previousClose
+        };
+    }
+
+    /**
+     * Generate buy links for different platforms
+     */
+    generateBuyLinks(symbol) {
+        return {
+            // Nigerian platforms (support US stocks)
+            bamboo: `https://app.bamboo.app/stocks/${symbol}`,
+            chaka: `https://chaka.com/stocks/${symbol}`,
+            risevest: `https://risevest.com/invest`,
+            trove: `https://trove.ng/stocks/${symbol}`,
+            
+            // US platforms (for reference)
+            robinhood: `https://robinhood.com/stocks/${symbol}`,
+            webull: `https://www.webull.com/quote/${symbol}`,
+            
+            // General search (always works)
+            google: `https://www.google.com/search?q=buy+${symbol}+stock`
         };
     }
 }

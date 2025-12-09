@@ -200,11 +200,27 @@ class TwelveDataAdapter extends BaseAdapter {
                 ? new Date(rawData.timestamp).toISOString()
                 : new Date().toISOString(),
             detailUrl: `https://twelvedata.com/stocks/${rawData.symbol}`,
+            buyLinks: this.generateBuyLinks(rawData.symbol),
             marketCap: null,
             high: rawData.high,
             low: rawData.low,
             open: rawData.open,
             previousClose: rawData.previousClose
+        };
+    }
+
+    /**
+     * Generate buy links for different platforms
+     */
+    generateBuyLinks(symbol) {
+        return {
+            bamboo: `https://app.bamboo.app/stocks/${symbol}`,
+            chaka: `https://chaka.com/stocks/${symbol}`,
+            risevest: `https://risevest.com/invest`,
+            trove: `https://trove.ng/stocks/${symbol}`,
+            robinhood: `https://robinhood.com/stocks/${symbol}`,
+            webull: `https://www.webull.com/quote/${symbol}`,
+            google: `https://www.google.com/search?q=buy+${symbol}+stock`
         };
     }
 }

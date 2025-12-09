@@ -102,14 +102,71 @@ exports.getQuote = async (req, res) => {
  */
 exports.getPopularStocks = async (req, res) => {
     try {
-        const FinnhubAdapter = require("../services/adapters/finnhubAdapter");
-        const finnhub = new FinnhubAdapter(process.env.FINNHUB_API_KEY);
+        const { provider } = req.query; // Optional: specify provider
 
-        const popularStocks = await finnhub.getPopularStocks();
+        const FinnhubAdapter = require("../services/adapters/finnhubAdapter");
+        const AlphaVantageAdapter = require("../services/adapters/alphaVantageAdapter");
+        const TwelveDataAdapter = require("../services/adapters/twelveDataAdapter");
+
+        // If specific provider requested
+        if (provider) {
+            let adapter;
+            if (provider === "finnhub") {
+                adapter = new FinnhubAdapter(process.env.FINNHUB_API_KEY);
+            } else if (provider === "alphavantage") {
+                adapter = new AlphaVantageAdapter(process.env.ALPHAVANTAGE_API_KEY);
+            } else if (provider === "twelvedata") {
+                adapter = new TwelveDataAdapter(process.env.TWELVEDATA_API_KEY);
+            } else {
+                return res.status(400).json({
+                    status: "error",
+                    message: "Invalid provider. Use: finnhub, alphavantage, or twelvedata"
+                });
+            }
+
+            const stocks = await adapter.getPopularStocks();
+            return res.json({
+                status: "success",
+                data: stocks,
+                provider: provider
+            });
+        }
+
+        // Fetch from all providers (default)
+        const finnhub = new FinnhubAdapter(process.env.FINNHUB_API_KEY);
+        const alphavantage = new AlphaVantageAdapter(process.env.ALPHAVANTAGE_API_KEY);
+        const twelvedata = new TwelveDataAdapter(process.env.TWELVEDATA_API_KEY);
+
+        // Fetch in parallel
+        const [finnhubStocks, alphavantageStocks, twelvedataStocks] = await Promise.all([
+            finnhub.getPopularStocks().catch(() => []),
+            alphavantage.getTrending().catch(() => []), // Alpha Vantage has trending
+            twelvedata.getPopularStocks().catch(() => [])
+        ]);
+
+        // Combine and deduplicate
+        const allStocks = [...finnhubStocks, ...alphavantageStocks, ...twelvedataStocks];
+        
+        // Deduplicate by symbol, keeping first occurrence
+        const uniqueStocks = [];
+        const seen = new Set();
+        
+        for (const stock of allStocks) {
+            if (stock && stock.symbol && !seen.has(stock.symbol)) {
+                seen.add(stock.symbol);
+                uniqueStocks.push(stock);
+            }
+        }
 
         return res.json({
             status: "success",
-            data: popularStocks
+            data: uniqueStocks,
+            sources: {
+                finnhub: finnhubStocks.length,
+                alphavantage: alphavantageStocks.length,
+                twelvedata: twelvedataStocks.length,
+                total: uniqueStocks.length
+            }
         });
     } catch (error) {
         return res.status(500).json({
