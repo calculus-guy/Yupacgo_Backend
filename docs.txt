@@ -1,20 +1,21 @@
-full name is first and last
+low is 50K medium is 200K high is unlimited
 
-
-
-
-I have the keys already in .env this is it incase u need the key word for process.env, FINNHUB_API_KEY=d4briq1r01qoua317upgd4briq1r01qoua317uq0
-ALPHAVANTAGE_API_KEY=L3VLAC9L60TKB2RS
-TWELVEDATA_API_KEY=34314e4a0b414bc786dc6f177d34a604
-, Let us use Redis then we need cache sha cause most of the API will only allow like 8 request per minute or like low amount sha, we need to be wise, You can create the seed later, keep the tags flexible but it should definately work well for what we plan to build sha, the trending should be from the api, FOr the price comparison we will use all the 3 api's, Then for the currency let us have multi-currency support but i think NGN is the primary one we want to have sha
-
-
-
-
-
-Ok do it sha... Like i said make it clean and modular and MVP friendly that is easy to read also
-
-
-
-
-git rm --cached *.md     To remove the .md
+ What's Missing/Could Be Better
+High Priority (Should Add):
+Background Jobs - Price monitoring for watchlist alerts
+Welcome Email - Not attached to signup yet (you caught this!)
+Email Verification - Verify email on signup
+Logout Endpoint - Currently missing
+Refresh Token - JWT expires in 1 day, need refresh mechanism
+Medium Priority (Nice to Have):
+Admin Dashboard - View users, metrics, manage system
+Search History - Track what users search for
+Recommendation Feedback - Users rate recommendations (thumbs up/down)
+Portfolio Analytics - Charts, performance graphs
+Export Data - Export portfolio/transactions to CSV
+Low Priority (Future):
+Social Features - Share recommendations, follow other users
+News Integration - Stock news from APIs
+Stock Screener - Advanced filtering
+Payment Integration - Premium subscriptions
+AI Insights - GPT-powered stock analysis

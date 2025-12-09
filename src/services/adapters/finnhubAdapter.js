@@ -119,6 +119,35 @@ class FinnhubAdapter extends BaseAdapter {
     }
 
     /**
+     * Get company profile (includes name)
+     */
+    async getCompanyProfile(symbol) {
+        try {
+            const response = await axios.get(`${this.baseUrl}/stock/profile2`, {
+                params: {
+                    symbol: symbol,
+                    token: this.apiKey
+                }
+            });
+
+            if (!response.data || !response.data.name) {
+                return null;
+            }
+
+            return {
+                symbol: symbol,
+                name: response.data.name,
+                exchange: response.data.exchange,
+                industry: response.data.finnhubIndustry,
+                logo: response.data.logo
+            };
+        } catch (error) {
+            this.handleError(error, "getCompanyProfile");
+            return null;
+        }
+    }
+
+    /**
      * Get trending stocks (top gainers from US market)
      */
     async getTrending() {
@@ -186,21 +215,63 @@ class FinnhubAdapter extends BaseAdapter {
 
     /**
      * Generate buy links for different platforms
+     * Note: Nigerian platforms don't support direct stock URLs
      */
     generateBuyLinks(symbol) {
         return {
-            // Nigerian platforms (support US stocks)
-            bamboo: `https://app.bamboo.app/stocks/${symbol}`,
-            chaka: `https://chaka.com/stocks/${symbol}`,
-            risevest: `https://risevest.com/invest`,
-            trove: `https://trove.ng/stocks/${symbol}`,
+            // Nigerian platforms (require login, no direct stock URLs)
+            bamboo: {
+                url: "https://app.bamboo.app/",
+                type: "app_required",
+                instructions: `Open Bamboo app → Search "${symbol}" → Buy`,
+                available: true
+            },
+            chaka: {
+                url: "https://chaka.com/",
+                type: "app_required",
+                instructions: `Open Chaka app → Search "${symbol}" → Buy`,
+                available: true
+            },
+            trove: {
+                url: "https://trove.ng/",
+                type: "app_required",
+                instructions: `Open Trove app → Search "${symbol}" → Buy`,
+                available: true
+            },
+            risevest: {
+                url: "https://risevest.com/",
+                type: "app_required",
+                instructions: `Open Risevest app → Search "${symbol}" → Buy`,
+                available: true
+            },
             
-            // US platforms (for reference)
-            robinhood: `https://robinhood.com/stocks/${symbol}`,
-            webull: `https://www.webull.com/quote/${symbol}`,
+            // US platforms (direct stock URLs work)
+            robinhood: {
+                url: `https://robinhood.com/stocks/${symbol}`,
+                type: "direct_link",
+                instructions: `Direct link to ${symbol} on Robinhood`,
+                available: true
+            },
+            webull: {
+                url: `https://www.webull.com/quote/${symbol}`,
+                type: "direct_link",
+                instructions: `Direct link to ${symbol} on Webull`,
+                available: true
+            },
             
-            // General search (always works)
-            google: `https://www.google.com/search?q=buy+${symbol}+stock`
+            // Fallback options
+            yahoo: {
+                url: `https://finance.yahoo.com/quote/${symbol}`,
+                type: "info_only",
+                instructions: `View ${symbol} details and find broker links`,
+                available: true
+            },
+            google: {
+                url: `https://www.google.com/search?q=buy+${symbol}+stock+nigeria`,
+                type: "search",
+                instructions: `Search for platforms to buy ${symbol}`,
+                available: true
+            }
         };
     }
 }

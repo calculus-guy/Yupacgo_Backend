@@ -214,13 +214,54 @@ class TwelveDataAdapter extends BaseAdapter {
      */
     generateBuyLinks(symbol) {
         return {
-            bamboo: `https://app.bamboo.app/stocks/${symbol}`,
-            chaka: `https://chaka.com/stocks/${symbol}`,
-            risevest: `https://risevest.com/invest`,
-            trove: `https://trove.ng/stocks/${symbol}`,
-            robinhood: `https://robinhood.com/stocks/${symbol}`,
-            webull: `https://www.webull.com/quote/${symbol}`,
-            google: `https://www.google.com/search?q=buy+${symbol}+stock`
+            bamboo: {
+                url: "https://app.bamboo.app/",
+                type: "app_required",
+                instructions: `Open Bamboo app → Search "${symbol}" → Buy`,
+                available: true
+            },
+            chaka: {
+                url: "https://chaka.com/",
+                type: "app_required",
+                instructions: `Open Chaka app → Search "${symbol}" → Buy`,
+                available: true
+            },
+            trove: {
+                url: "https://trove.ng/",
+                type: "app_required",
+                instructions: `Open Trove app → Search "${symbol}" → Buy`,
+                available: true
+            },
+            risevest: {
+                url: "https://risevest.com/",
+                type: "app_required",
+                instructions: `Open Risevest app → Search "${symbol}" → Buy`,
+                available: true
+            },
+            robinhood: {
+                url: `https://robinhood.com/stocks/${symbol}`,
+                type: "direct_link",
+                instructions: `Direct link to ${symbol} on Robinhood`,
+                available: true
+            },
+            webull: {
+                url: `https://www.webull.com/quote/${symbol}`,
+                type: "direct_link",
+                instructions: `Direct link to ${symbol} on Webull`,
+                available: true
+            },
+            yahoo: {
+                url: `https://finance.yahoo.com/quote/${symbol}`,
+                type: "info_only",
+                instructions: `View ${symbol} details and find broker links`,
+                available: true
+            },
+            google: {
+                url: `https://www.google.com/search?q=buy+${symbol}+stock+nigeria`,
+                type: "search",
+                instructions: `Search for platforms to buy ${symbol}`,
+                available: true
+            }
         };
     }
 }

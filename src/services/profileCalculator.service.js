@@ -1,5 +1,5 @@
 /**
- * Profile Calculator Service - Enhanced Version
+ * Profile Calculator Service
  * Converts onboarding answers into computed investor profile
  * with goal-based constraints, budget constraints, and diversification levels
  */

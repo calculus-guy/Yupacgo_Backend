@@ -1,6 +1,7 @@
 const recommendationEngine = require("../services/recommendation.engine.v2");
 const FinnhubAdapter = require("../services/adapters/finnhubAdapter");
 const AlphaVantageAdapter = require("../services/adapters/alphaVantageAdapter");
+const { createRecommendationNotification } = require("../services/notification.service");
 
 /**
  * Generate new personalized recommendations
@@ -11,6 +12,13 @@ exports.generateRecommendations = async (req, res) => {
         const userId = req.user.userId;
 
         const session = await recommendationEngine.generateRecommendations(userId);
+
+        // Create notification
+        await createRecommendationNotification(
+            userId,
+            session.recommendations.length,
+            session._id
+        );
 
         return res.json({
             status: "success",

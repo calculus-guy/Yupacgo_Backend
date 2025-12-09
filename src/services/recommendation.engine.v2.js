@@ -4,6 +4,7 @@ const FinnhubAdapter = require("./adapters/finnhubAdapter");
 const AlphaVantageAdapter = require("./adapters/alphaVantageAdapter");
 const TwelveDataAdapter = require("./adapters/twelveDataAdapter");
 const { getCache, setCache } = require("../config/redis");
+const { enrichStocks } = require("./stockEnricher.service");
 
 /**
  * API-Driven Recommendation Engine
@@ -33,11 +34,14 @@ class RecommendationEngineV2 {
             }
 
             // Fetch stocks from APIs based on profile
-            const candidateStocks = await this.fetchCandidateStocks(profile);
+            let candidateStocks = await this.fetchCandidateStocks(profile);
 
             if (candidateStocks.length === 0) {
                 throw new Error("No stocks available from APIs at the moment");
             }
+
+            // Enrich stocks with company names
+            candidateStocks = await enrichStocks(candidateStocks);
 
             // Filter stocks by profile constraints
             const filteredStocks = this.filterStocksByProfile(candidateStocks, profile);
@@ -129,44 +133,88 @@ class RecommendationEngineV2 {
                 return cached;
             }
 
-            console.log("🔄 Fetching stocks from APIs...");
+            console.log("🔄 Fetching stocks from ALL 3 APIs...");
 
             const stocks = [];
 
-            // Fetch from different sources based on profile
+            // Fetch from ALL providers in parallel for better coverage
+            const fetchPromises = [];
+
+            // 1. Fetch by preferred sectors (from Finnhub)
             if (profile.preferredSectors && profile.preferredSectors.length > 0) {
-                // Fetch by preferred sectors
                 for (const sector of profile.preferredSectors.slice(0, 2)) {
-                    const sectorStocks = await this.adapters.finnhub.getStocksBySector(sector);
-                    stocks.push(...sectorStocks);
+                    fetchPromises.push(
+                        this.adapters.finnhub.getStocksBySector(sector)
+                            .catch(err => {
+                                console.error(`Finnhub sector ${sector} error:`, err.message);
+                                return [];
+                            })
+                    );
                 }
             }
 
-            // Always fetch popular stocks
-            const popularStocks = await this.adapters.twelvedata.getPopularStocks();
-            stocks.push(...popularStocks);
+            // 2. Fetch popular stocks from Twelve Data
+            fetchPromises.push(
+                this.adapters.twelvedata.getPopularStocks()
+                    .catch(err => {
+                        console.error("Twelve Data error:", err.message);
+                        return [];
+                    })
+            );
 
-            // Fetch trending if aggressive profile
-            if (profile.riskLevel === "Aggressive") {
-                const trending = await this.adapters.alphavantage.getTrending();
-                stocks.push(...trending);
-            }
+            // 3. Fetch popular stocks from Finnhub (different set)
+            fetchPromises.push(
+                this.adapters.finnhub.getPopularStocks()
+                    .catch(err => {
+                        console.error("Finnhub popular error:", err.message);
+                        return [];
+                    })
+            );
+
+            // 4. Fetch trending from Alpha Vantage (for all profiles, not just aggressive)
+            fetchPromises.push(
+                this.adapters.alphavantage.getTrending()
+                    .catch(err => {
+                        console.error("Alpha Vantage error:", err.message);
+                        return [];
+                    })
+            );
+
+            // Wait for all fetches to complete
+            const results = await Promise.all(fetchPromises);
+
+            // Flatten all results
+            results.forEach(result => {
+                if (Array.isArray(result)) {
+                    stocks.push(...result);
+                }
+            });
 
             // Deduplicate by symbol
             const uniqueStocks = [];
             const seen = new Set();
+            const providerCount = { finnhub: 0, alphavantage: 0, twelvedata: 0 };
 
             for (const stock of stocks) {
                 if (stock && stock.symbol && !seen.has(stock.symbol)) {
                     seen.add(stock.symbol);
                     uniqueStocks.push(stock);
+                    
+                    // Track provider distribution
+                    if (stock.provider) {
+                        providerCount[stock.provider] = (providerCount[stock.provider] || 0) + 1;
+                    }
                 }
             }
 
             // Cache for 5 minutes
             await setCache(cacheKey, uniqueStocks, 300);
 
-            console.log(` Fetched ${uniqueStocks.length} unique stocks from APIs`);
+            console.log(`✅ Fetched ${uniqueStocks.length} unique stocks from APIs`);
+            console.log(`   - Finnhub: ${providerCount.finnhub} stocks`);
+            console.log(`   - Alpha Vantage: ${providerCount.alphavantage} stocks`);
+            console.log(`   - Twelve Data: ${providerCount.twelvedata} stocks`);
+            
             return uniqueStocks;
         } catch (error) {
             console.error("Error fetching candidate stocks:", error.message);
