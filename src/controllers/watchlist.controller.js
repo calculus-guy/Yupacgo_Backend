@@ -1,5 +1,6 @@
 const Watchlist = require("../models/watchlist.models");
 const priceAggregator = require("../services/priceAggregator.service");
+const { logActivity } = require("../services/activityLogger.service");
 
 /**
  * Add stock to watchlist
@@ -8,7 +9,7 @@ const priceAggregator = require("../services/priceAggregator.service");
 exports.addToWatchlist = async (req, res) => {
     try {
         const userId = req.user.userId;
-        const { symbol, name, exchange, notes } = req.body;
+        const { symbol, name, exchange, notes, priceAlert } = req.body;
 
         if (!symbol || !name) {
             return res.status(400).json({
@@ -31,8 +32,19 @@ exports.addToWatchlist = async (req, res) => {
             symbol,
             name,
             exchange,
-            notes
+            notes,
+            priceAlert
         });
+
+        // Log activity
+        logActivity({
+            userId,
+            action: "watchlist_add",
+            details: { symbol, name, hasAlert: !!priceAlert?.enabled },
+            userInfo: { email: req.user.email, firstname: req.user.firstname, lastname: req.user.lastname },
+            ipAddress: req.ip || req.connection.remoteAddress,
+            userAgent: req.get("User-Agent")
+        }).catch(err => console.error("Activity logging failed:", err.message));
 
         return res.status(201).json({
             status: "success",
@@ -128,6 +140,16 @@ exports.removeFromWatchlist = async (req, res) => {
                 message: "Watchlist item not found"
             });
         }
+
+        // Log activity
+        logActivity({
+            userId,
+            action: "watchlist_remove",
+            details: { symbol: item.symbol, name: item.name },
+            userInfo: { email: req.user.email, firstname: req.user.firstname, lastname: req.user.lastname },
+            ipAddress: req.ip || req.connection.remoteAddress,
+            userAgent: req.get("User-Agent")
+        }).catch(err => console.error("Activity logging failed:", err.message));
 
         return res.json({
             status: "success",
