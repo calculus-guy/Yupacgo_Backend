@@ -4,7 +4,7 @@ const User = require("../models/user.models");
 const Watchlist = require("../models/watchlist.models");
 const VirtualPortfolio = require("../models/virtualPortfolio.models");
 const Notification = require("../models/notification.models");
-const Recommendation = require("../models/recommendation.models");
+const RecommendationSession = require("../models/recommendationSession.models");
 const { redisClient } = require("../config/redis");
 
 /**
@@ -26,7 +26,7 @@ exports.getDashboard = async (req, res) => {
             Watchlist.countDocuments(),
             VirtualPortfolio.countDocuments(),
             Notification.countDocuments(),
-            Recommendation.countDocuments(),
+            RecommendationSession.countDocuments(),
             getActivityStats(7) // Last 7 days
         ]);
 
@@ -222,7 +222,7 @@ exports.triggerCleanup = async (req, res) => {
 exports.getStocks = async (req, res) => {
     try {
         // Get most recommended stocks
-        const recommendedStocks = await Recommendation.aggregate([
+        const recommendedStocks = await RecommendationSession.aggregate([
             {
                 $unwind: "$recommendations"
             },
@@ -231,8 +231,8 @@ exports.getStocks = async (req, res) => {
                     _id: "$recommendations.symbol",
                     name: { $first: "$recommendations.name" },
                     count: { $sum: 1 },
-                    avgScore: { $avg: "$recommendations.score" },
-                    lastRecommended: { $max: "$createdAt" }
+                    avgScore: { $avg: "$recommendations.matchScore" },
+                    lastRecommended: { $max: "$generatedAt" }
                 }
             },
             {
@@ -366,20 +366,20 @@ exports.getNotifications = async (req, res) => {
 exports.getRecommendationAnalytics = async (req, res) => {
     try {
         // Get recommendation statistics
-        const totalRecommendations = await Recommendation.countDocuments();
+        const totalRecommendations = await RecommendationSession.countDocuments();
         
         // Get recommendations by risk level
-        const byRiskLevel = await Recommendation.aggregate([
+        const byRiskLevel = await RecommendationSession.aggregate([
             {
                 $group: {
-                    _id: "$riskLevel",
+                    _id: "$profileSnapshot.riskLevel",
                     count: { $sum: 1 }
                 }
             }
         ]);
 
         // Get most recommended stocks
-        const topStocks = await Recommendation.aggregate([
+        const topStocks = await RecommendationSession.aggregate([
             {
                 $unwind: "$recommendations"
             },
@@ -388,7 +388,7 @@ exports.getRecommendationAnalytics = async (req, res) => {
                     _id: "$recommendations.symbol",
                     name: { $first: "$recommendations.name" },
                     count: { $sum: 1 },
-                    avgScore: { $avg: "$recommendations.score" }
+                    avgScore: { $avg: "$recommendations.matchScore" }
                 }
             },
             {
@@ -400,9 +400,9 @@ exports.getRecommendationAnalytics = async (req, res) => {
         ]);
 
         // Get recent recommendations
-        const recentRecommendations = await Recommendation.find()
+        const recentRecommendations = await RecommendationSession.find()
             .populate("userId", "firstname lastname email")
-            .sort({ createdAt: -1 })
+            .sort({ generatedAt: -1 })
             .limit(10);
 
         return res.json({

@@ -22,3 +22,9 @@ News Integration - Stock news from APIs
 Stock Screener - Advanced filtering
 Payment Integration - Premium subscriptions
 AI Insights - GPT-powered stock analysis
+
+admin route
+{
+  "email": "sakariyauabdullateef993@gmail.com",
+  "password": "vivoY12s"
+}

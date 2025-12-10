@@ -38,5 +38,5 @@ app.use("/api/profile-management", profileManagementRoutes);
 app.use("/api/portfolio", virtualPortfolioRoutes);
 app.use("/api/admin", adminRoutes);
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
