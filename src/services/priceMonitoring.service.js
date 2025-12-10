@@ -1,6 +1,6 @@
 const Watchlist = require("../models/watchlist.models");
 const Notification = require("../models/notification.models");
-const { getStockPrice } = require("./stock.service");
+const priceAggregator = require("./priceAggregator.service");
 
 /**
  * Check all watchlists and send alerts for price changes
@@ -23,7 +23,7 @@ exports.monitorWatchlistPrices = async () => {
 
             try {
                 // Get current price
-                const priceData = await getStockPrice(watchlist.symbol);
+                const priceData = await priceAggregator.getAggregatedQuote(watchlist.symbol);
                 const currentPrice = priceData.price;
                 const targetPrice = watchlist.priceAlert.targetPrice;
                 const condition = watchlist.priceAlert.condition;
