@@ -60,7 +60,7 @@ exports.addToWatchlist = async (req, res) => {
 };
 
 /**
- * Get user's watchlist
+ * Get user's watchlist with comprehensive stock data
  * GET /api/watchlist
  */
 exports.getWatchlist = async (req, res) => {
@@ -69,9 +69,64 @@ exports.getWatchlist = async (req, res) => {
 
         const watchlist = await Watchlist.find({ userId }).sort({ addedAt: -1 });
 
+        // Fetch comprehensive stock data for all symbols
+        const enrichedWatchlist = await Promise.all(
+            watchlist.map(async (item) => {
+                try {
+                    // Get comprehensive quote data
+                    const quote = await priceAggregator.getAggregatedQuote(item.symbol);
+                    
+                    return {
+                        // Watchlist specific data
+                        _id: item._id,
+                        userId: item.userId,
+                        addedAt: item.addedAt,
+                        notes: item.notes,
+                        priceAlert: item.priceAlert,
+                        
+                        // Comprehensive stock data
+                        symbol: quote.symbol,
+                        name: quote.name,
+                        exchange: quote.exchange,
+                        price: quote.price,
+                        priceType: quote.priceType,
+                        provider: quote.provider,
+                        confidence: quote.confidence,
+                        timestamp: quote.timestamp,
+                        
+                        // Additional calculated fields
+                        alertStatus: item.priceAlert?.enabled ? 
+                            (item.priceAlert.condition === "above" && quote.price >= item.priceAlert.targetPrice) ||
+                            (item.priceAlert.condition === "below" && quote.price <= item.priceAlert.targetPrice) 
+                            ? "triggered" : "active" 
+                            : "none"
+                    };
+                } catch (error) {
+                    console.error(`Error fetching data for ${item.symbol}:`, error.message);
+                    // Return basic watchlist data if stock data fetch fails
+                    return {
+                        _id: item._id,
+                        userId: item.userId,
+                        symbol: item.symbol,
+                        name: item.name,
+                        exchange: item.exchange,
+                        addedAt: item.addedAt,
+                        notes: item.notes,
+                        priceAlert: item.priceAlert,
+                        price: null,
+                        priceType: null,
+                        provider: null,
+                        confidence: "low",
+                        timestamp: null,
+                        alertStatus: "error"
+                    };
+                }
+            })
+        );
+
         return res.json({
             status: "success",
-            data: watchlist
+            data: enrichedWatchlist
         });
     } catch (error) {
         return res.status(500).json({
@@ -82,7 +137,7 @@ exports.getWatchlist = async (req, res) => {
 };
 
 /**
- * Get watchlist with live prices
+ * Get watchlist with comprehensive price comparison data
  * GET /api/watchlist/with-prices
  */
 exports.getWatchlistWithPrices = async (req, res) => {
@@ -91,29 +146,86 @@ exports.getWatchlistWithPrices = async (req, res) => {
 
         const watchlist = await Watchlist.find({ userId }).sort({ addedAt: -1 });
 
-        // Fetch live prices for all symbols
-        const symbols = watchlist.map(item => item.symbol);
-        
-        // Fetch quotes (this will use cache if available)
-        const quotes = await Promise.all(
-            symbols.map(symbol => 
-                priceAggregator.searchStocks(symbol)
-                    .then(results => results[0])
-                    .catch(() => null)
-            )
+        // Fetch comprehensive price comparison data for all symbols
+        const enrichedWatchlist = await Promise.all(
+            watchlist.map(async (item) => {
+                try {
+                    // Get comprehensive price comparison data
+                    const priceComparison = await priceAggregator.getPriceComparison(item.symbol);
+                    
+                    return {
+                        // Watchlist specific data
+                        _id: item._id,
+                        userId: item.userId,
+                        addedAt: item.addedAt,
+                        notes: item.notes,
+                        priceAlert: item.priceAlert,
+                        
+                        // Comprehensive stock data with price comparison
+                        symbol: priceComparison.symbol,
+                        name: priceComparison.name,
+                        exchange: priceComparison.exchange,
+                        
+                        // Best price data
+                        price: priceComparison.best.price,
+                        priceType: priceComparison.best.priceType,
+                        provider: priceComparison.best.provider,
+                        timestamp: priceComparison.best.timestamp,
+                        
+                        // Price comparison data
+                        prices: priceComparison.prices,
+                        priceVariance: priceComparison.priceVariance,
+                        confidence: priceComparison.confidence,
+                        
+                        // Alert analysis
+                        alertStatus: item.priceAlert?.enabled ? 
+                            (item.priceAlert.condition === "above" && priceComparison.best.price >= item.priceAlert.targetPrice) ||
+                            (item.priceAlert.condition === "below" && priceComparison.best.price <= item.priceAlert.targetPrice) 
+                            ? "triggered" : "active" 
+                            : "none",
+                            
+                        // Price alert details
+                        alertAnalysis: item.priceAlert?.enabled ? {
+                            targetPrice: item.priceAlert.targetPrice,
+                            condition: item.priceAlert.condition,
+                            currentPrice: priceComparison.best.price,
+                            difference: item.priceAlert.condition === "above" 
+                                ? priceComparison.best.price - item.priceAlert.targetPrice
+                                : item.priceAlert.targetPrice - priceComparison.best.price,
+                            percentageToTarget: item.priceAlert.condition === "above"
+                                ? ((priceComparison.best.price - item.priceAlert.targetPrice) / item.priceAlert.targetPrice) * 100
+                                : ((item.priceAlert.targetPrice - priceComparison.best.price) / item.priceAlert.targetPrice) * 100
+                        } : null
+                    };
+                } catch (error) {
+                    console.error(`Error fetching price data for ${item.symbol}:`, error.message);
+                    // Return basic watchlist data if price data fetch fails
+                    return {
+                        _id: item._id,
+                        userId: item.userId,
+                        symbol: item.symbol,
+                        name: item.name,
+                        exchange: item.exchange,
+                        addedAt: item.addedAt,
+                        notes: item.notes,
+                        priceAlert: item.priceAlert,
+                        price: null,
+                        priceType: null,
+                        provider: null,
+                        prices: [],
+                        priceVariance: 0,
+                        confidence: "low",
+                        timestamp: null,
+                        alertStatus: "error",
+                        alertAnalysis: null
+                    };
+                }
+            })
         );
-
-        // Combine watchlist with prices
-        const watchlistWithPrices = watchlist.map((item, index) => ({
-            ...item.toObject(),
-            currentPrice: quotes[index]?.price || null,
-            priceChange: quotes[index]?.change || null,
-            priceChangePercent: quotes[index]?.changePercent || null
-        }));
 
         return res.json({
             status: "success",
-            data: watchlistWithPrices
+            data: enrichedWatchlist
         });
     } catch (error) {
         return res.status(500).json({
