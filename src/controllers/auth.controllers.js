@@ -67,6 +67,24 @@ exports.login = async (req, res) => {
             { expiresIn: "7d" }
         );
 
+        // Check if onboarding is actually complete by validating required fields exist in DB
+        let onboardingComplete = false;
+        if (user.onboarding) {
+            const Onboarding = require("../models/onboarding.models");
+            const onboardingData = await Onboarding.findById(user.onboarding);
+            
+            // Validate that all required onboarding fields are present and not empty
+            onboardingComplete = !!(
+                onboardingData &&
+                onboardingData.goal &&
+                onboardingData.risk &&
+                onboardingData.duration &&
+                onboardingData.budget &&
+                onboardingData.experience &&
+                onboardingData.approach
+            );
+        }
+
         // Log login activity
         logActivity({
             userId: user._id,
@@ -81,7 +99,14 @@ exports.login = async (req, res) => {
             status: "success",
             message: "Login successful",
             token,
-            data: { id: user._id, firstname: user.firstname, lastname: user.lastname, email, role: user.role }
+            data: { 
+                id: user._id, 
+                firstname: user.firstname, 
+                lastname: user.lastname, 
+                email, 
+                role: user.role,
+                onboardingComplete
+            }
         });
     } catch (error) {
         return res.status(500).json({ status: "error", message: error.message });

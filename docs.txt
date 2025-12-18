@@ -28,3 +28,7 @@ admin route
   "email": "sakariyauabdullateef993@gmail.com",
   "password": "vivoY12s"
 }
+
+
+
+Limit the popular route with 10 limit
