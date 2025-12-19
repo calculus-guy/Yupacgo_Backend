@@ -20,7 +20,27 @@ const adminRoutes = require("./src/routes/admin.routes");
 const app = express();
 
 app.use(express.json());
-app.use(cors());
+
+const corsOptions = {
+    origin: [
+        'https://yupacgo.vercel.app',
+        'http://localhost:5173'
+    ],
+    credentials: true,
+    optionsSuccessStatus: 200,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+        'Origin',
+        'X-Requested-With',
+        'Content-Type',
+        'Accept',
+        'Authorization',
+        'Cache-Control',
+        'Pragma'
+    ]
+};
+
+app.use(cors(corsOptions));
 
 connectDB();
 connectRedis();
