@@ -10,6 +10,7 @@ const {
     getRecommendationAnalytics,
     getWatchlistAnalytics,
     getPortfolioAnalytics,
+    getMonitoringStats,
     triggerPriceMonitoring, 
     triggerCleanup 
 } = require("../controllers/admin.controller");
@@ -27,6 +28,7 @@ router.get("/notifications", adminAuth, getNotifications);
 router.get("/recommendations", adminAuth, getRecommendationAnalytics);
 router.get("/watchlist-analytics", adminAuth, getWatchlistAnalytics);
 router.get("/portfolio-analytics", adminAuth, getPortfolioAnalytics);
+router.get("/monitoring-stats", adminAuth, getMonitoringStats);
 
 // Manual triggers for testing
 router.post("/trigger-price-monitoring", adminAuth, triggerPriceMonitoring);

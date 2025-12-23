@@ -1,5 +1,6 @@
 const { triggerPriceMonitoring, triggerCleanup } = require("../services/scheduler.service");
 const { getRecentActivities, getActivityStats } = require("../services/activityLogger.service");
+const { getMonitoringStats } = require("../services/priceMonitoring.service");
 const User = require("../models/user.models");
 const Watchlist = require("../models/watchlist.models");
 const VirtualPortfolio = require("../models/virtualPortfolio.models");
@@ -581,6 +582,99 @@ exports.getPortfolioAnalytics = async (req, res) => {
                 portfolioStats: portfolioStats[0] || {},
                 topTradedStocks,
                 recentTransactions
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Get price monitoring analytics
+ * GET /api/admin/monitoring-stats
+ */
+exports.getMonitoringStats = async (req, res) => {
+    try {
+        const stats = await getMonitoringStats();
+        
+        if (!stats) {
+            return res.status(500).json({
+                status: "error",
+                message: "Failed to get monitoring statistics"
+            });
+        }
+
+        // Get additional monitoring details
+        const alertsWithDetails = await Watchlist.aggregate([
+            {
+                $match: {
+                    "priceAlert.enabled": true,
+                    "priceAlert.targetPrice": { $exists: true, $ne: null }
+                }
+            },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "userId",
+                    foreignField: "_id",
+                    as: "user"
+                }
+            },
+            {
+                $unwind: "$user"
+            },
+            {
+                $group: {
+                    _id: "$priceAlert.condition",
+                    count: { $sum: 1 },
+                    symbols: { $addToSet: "$symbol" }
+                }
+            }
+        ]);
+
+        // Get recent alert performance
+        const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const recentAlertPerformance = await Notification.aggregate([
+            {
+                $match: {
+                    type: "price_alert",
+                    createdAt: { $gte: last24Hours }
+                }
+            },
+            {
+                $group: {
+                    _id: {
+                        hour: { $hour: "$createdAt" },
+                        symbol: "$metadata.symbol"
+                    },
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $group: {
+                    _id: "$_id.hour",
+                    alertCount: { $sum: "$count" },
+                    uniqueSymbols: { $sum: 1 }
+                }
+            },
+            {
+                $sort: { "_id": 1 }
+            }
+        ]);
+
+        return res.json({
+            status: "success",
+            data: {
+                ...stats,
+                alertsByCondition: alertsWithDetails,
+                recentAlertPerformance,
+                monitoringStatus: "24/7 Active",
+                schedules: {
+                    base: "Every 5 minutes (24/7)",
+                    marketHours: "Every 2 minutes (9AM-4PM EST, Mon-Fri)",
+                    extendedHours: "Every 10 minutes (4PM-9AM EST, Mon-Fri)",
+                    weekends: "Every 15 minutes (Sat-Sun)"
+                }
             }
         });
     } catch (error) {

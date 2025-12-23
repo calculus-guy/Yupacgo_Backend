@@ -7,10 +7,30 @@ const { monitorWatchlistPrices, cleanupOldNotifications } = require("./priceMoni
 exports.initializeScheduler = () => {
     console.log("⏰ Initializing background jobs...");
 
-    // Price monitoring - Every 15 minutes during market hours (9 AM - 4 PM EST, Mon-Fri)
-    // Cron: At minute 0, 15, 30, and 45 past every hour from 9 through 16 on Mon-Fri
-    cron.schedule("0,15,30,45 9-16 * * 1-5", async () => {
-        console.log("⏰ Running scheduled price monitoring...");
+    // 24/7 Price monitoring - Every 5 minutes (more frequent for better responsiveness)
+    // This covers crypto, international markets, after-hours trading, and pre-market
+    cron.schedule("*/5 * * * *", async () => {
+        console.log("⏰ Running 24/7 price monitoring...");
+        await monitorWatchlistPrices();
+    });
+
+    // Additional frequent monitoring during US market hours (9 AM - 4 PM EST, Mon-Fri)
+    // Every 2 minutes for more responsive alerts during active trading
+    cron.schedule("*/2 9-16 * * 1-5", async () => {
+        console.log("⏰ Running enhanced market hours monitoring...");
+        await monitorWatchlistPrices();
+    });
+
+    // Extended hours monitoring (4 PM - 9 AM EST, Mon-Fri) - Every 10 minutes
+    // Covers after-hours and pre-market trading
+    cron.schedule("*/10 0-8,17-23 * * 1-5", async () => {
+        console.log("⏰ Running extended hours monitoring...");
+        await monitorWatchlistPrices();
+    });
+
+    // Weekend monitoring - Every 15 minutes (for crypto and international markets)
+    cron.schedule("*/15 * * * 0,6", async () => {
+        console.log("⏰ Running weekend monitoring...");
         await monitorWatchlistPrices();
     });
 
@@ -21,7 +41,10 @@ exports.initializeScheduler = () => {
     });
 
     console.log("✅ Background jobs initialized:");
-    console.log("   - Price monitoring: Every 15 min (9 AM - 4 PM EST, Mon-Fri)");
+    console.log("   - 24/7 Base monitoring: Every 5 minutes");
+    console.log("   - Market hours (9AM-4PM EST, Mon-Fri): Every 2 minutes");
+    console.log("   - Extended hours (4PM-9AM EST, Mon-Fri): Every 10 minutes");
+    console.log("   - Weekend monitoring: Every 15 minutes");
     console.log("   - Notification cleanup: Daily at 2 AM");
 };
 
