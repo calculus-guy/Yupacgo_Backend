@@ -1,6 +1,6 @@
 const VirtualPortfolio = require("../models/virtualPortfolio.models");
 const priceAggregator = require("../services/priceAggregator.service");
-const { enrichStock } = require("../services/stockEnricher.service");
+const stockNameEnrichment = require("../services/stockNameEnrichment.service");
 
 /**
  * Get or create portfolio
@@ -163,7 +163,11 @@ exports.addHolding = async (req, res) => {
         }
 
         // Get stock name
-        const enriched = await enrichStock({ symbol, name: symbol });
+        const FinnhubAdapter = require("../services/adapters/finnhubAdapter");
+        const adapters = {
+            finnhub: new FinnhubAdapter(process.env.FINNHUB_API_KEY)
+        };
+        const enriched = await stockNameEnrichment.enrichStockName({ symbol, name: symbol }, adapters);
 
         // Check if holding already exists
         const existingHolding = portfolio.holdings.find(h => h.symbol === symbol);

@@ -4,7 +4,7 @@ const FinnhubAdapter = require("./adapters/finnhubAdapter");
 const AlphaVantageAdapter = require("./adapters/alphaVantageAdapter");
 const TwelveDataAdapter = require("./adapters/twelveDataAdapter");
 const { getCache, setCache } = require("../config/redis");
-const { enrichStocks } = require("./stockEnricher.service");
+const stockNameEnrichment = require("./stockNameEnrichment.service");
 
 /**
  * API-Driven Recommendation Engine
@@ -41,7 +41,10 @@ class RecommendationEngineV2 {
             }
 
             // Enrich stocks with company names
-            candidateStocks = await enrichStocks(candidateStocks);
+            const adapters = {
+                finnhub: this.adapters.finnhub
+            };
+            candidateStocks = await stockNameEnrichment.enrichStockNames(candidateStocks, adapters);
 
             // Filter stocks by profile constraints
             const filteredStocks = this.filterStocksByProfile(candidateStocks, profile);

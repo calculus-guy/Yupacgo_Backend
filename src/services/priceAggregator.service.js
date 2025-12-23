@@ -2,6 +2,7 @@ const FinnhubAdapter = require("./adapters/finnhubAdapter");
 const AlphaVantageAdapter = require("./adapters/alphaVantageAdapter");
 const TwelveDataAdapter = require("./adapters/twelveDataAdapter");
 const { getCache, setCache } = require("../config/redis");
+const stockNameEnrichment = require("./stockNameEnrichment.service");
 
 /**
  * Price Aggregator Service
@@ -114,7 +115,7 @@ class PriceAggregatorService {
 
         const comparison = await this.getPriceComparison(symbol);
         
-        const result = {
+        let result = {
             symbol: comparison.symbol,
             name: comparison.name,
             exchange: comparison.exchange,
@@ -124,6 +125,14 @@ class PriceAggregatorService {
             timestamp: comparison.best.timestamp,
             confidence: comparison.confidence
         };
+
+        // Enrich with company name if not already present
+        if (!result.name || result.name === symbol) {
+            const adapters = {
+                finnhub: this.adapters.finnhub
+            };
+            result = await stockNameEnrichment.enrichStockName(result, adapters);
+        }
 
         // Cache for 60 seconds
         await setCache(cacheKey, result, 60);
@@ -145,7 +154,14 @@ class PriceAggregatorService {
         );
 
         const results = await Promise.all(promises);
-        return results.filter(r => r !== null);
+        const validResults = results.filter(r => r !== null);
+
+        // Enrich all results with company names
+        const adapters = {
+            finnhub: this.adapters.finnhub
+        };
+        
+        return await stockNameEnrichment.enrichStockNames(validResults, adapters);
     }
 
     /**

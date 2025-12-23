@@ -1,4 +1,5 @@
 const priceAggregator = require("../services/priceAggregator.service");
+const stockNameEnrichment = require("../services/stockNameEnrichment.service");
 
 /**
  * Search for stocks
@@ -40,9 +41,17 @@ exports.getStockDetails = async (req, res) => {
         // Get quote from API
         const quote = await priceAggregator.getAggregatedQuote(symbol);
 
+        // Enrich with company name
+        const FinnhubAdapter = require("../services/adapters/finnhubAdapter");
+        const adapters = {
+            finnhub: new FinnhubAdapter(process.env.FINNHUB_API_KEY)
+        };
+        
+        const enrichedQuote = await stockNameEnrichment.enrichStockName(quote, adapters);
+
         return res.json({
             status: "success",
-            data: quote
+            data: enrichedQuote
         });
     } catch (error) {
         return res.status(500).json({
@@ -84,9 +93,17 @@ exports.getQuote = async (req, res) => {
 
         const quote = await priceAggregator.getAggregatedQuote(symbol);
 
+        // Enrich with company name
+        const FinnhubAdapter = require("../services/adapters/finnhubAdapter");
+        const adapters = {
+            finnhub: new FinnhubAdapter(process.env.FINNHUB_API_KEY)
+        };
+        
+        const enrichedQuote = await stockNameEnrichment.enrichStockName(quote, adapters);
+
         return res.json({
             status: "success",
-            data: quote
+            data: enrichedQuote
         });
     } catch (error) {
         return res.status(500).json({
@@ -108,6 +125,11 @@ exports.getPopularStocks = async (req, res) => {
         const AlphaVantageAdapter = require("../services/adapters/alphaVantageAdapter");
         const TwelveDataAdapter = require("../services/adapters/twelveDataAdapter");
 
+        // Initialize adapters for name enrichment
+        const adapters = {
+            finnhub: new FinnhubAdapter(process.env.FINNHUB_API_KEY)
+        };
+
         // If specific provider requested
         if (provider) {
             let adapter;
@@ -125,9 +147,13 @@ exports.getPopularStocks = async (req, res) => {
             }
 
             const stocks = await adapter.getPopularStocks();
+            
+            // Enrich with company names
+            const enrichedStocks = await stockNameEnrichment.enrichStockNames(stocks, adapters);
+            
             return res.json({
                 status: "success",
-                data: stocks,
+                data: enrichedStocks,
                 provider: provider
             });
         }
@@ -158,14 +184,17 @@ exports.getPopularStocks = async (req, res) => {
             }
         }
 
+        // Enrich all stocks with company names
+        const enrichedStocks = await stockNameEnrichment.enrichStockNames(uniqueStocks, adapters);
+
         return res.json({
             status: "success",
-            data: uniqueStocks,
+            data: enrichedStocks,
             sources: {
                 finnhub: finnhubStocks.length,
                 alphavantage: alphavantageStocks.length,
                 twelvedata: twelvedataStocks.length,
-                total: uniqueStocks.length
+                total: enrichedStocks.length
             }
         });
     } catch (error) {
