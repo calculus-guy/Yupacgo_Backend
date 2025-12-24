@@ -126,8 +126,8 @@ class PriceAggregatorService {
             confidence: comparison.confidence
         };
 
-        // Enrich with company name if not already present
-        if (!result.name || result.name === symbol) {
+        // Enrich with company name if not already present or if it's just the symbol
+        if (!result.name || result.name === symbol || result.name === null || result.name.trim() === "") {
             const adapters = {
                 finnhub: this.adapters.finnhub
             };

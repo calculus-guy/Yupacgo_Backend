@@ -34,6 +34,10 @@ const NotificationPreferencesSchema = new mongoose.Schema(
                 type: Boolean,
                 default: true
             },
+            portfolioUpdates: {
+                type: Boolean,
+                default: true
+            },
             profileUpdates: {
                 type: Boolean,
                 default: true

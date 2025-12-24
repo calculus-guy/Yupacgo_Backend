@@ -104,18 +104,53 @@ class StockNameEnrichmentService {
             "XLB": "Materials Select Sector SPDR Fund",
             "XLRE": "Real Estate Select Sector SPDR Fund"
         };
+
+        // Static mapping for exchanges
+        this.staticExchanges = {
+            // NASDAQ stocks
+            "AAPL": "NASDAQ", "MSFT": "NASDAQ", "GOOGL": "NASDAQ", "GOOG": "NASDAQ",
+            "AMZN": "NASDAQ", "TSLA": "NASDAQ", "META": "NASDAQ", "NVDA": "NASDAQ",
+            "ORCL": "NASDAQ", "CSCO": "NASDAQ", "INTC": "NASDAQ", "AMD": "NASDAQ",
+            "CRM": "NASDAQ", "ADBE": "NASDAQ", "NFLX": "NASDAQ", "COST": "NASDAQ",
+            "SBUX": "NASDAQ",
+            
+            // NYSE stocks
+            "JPM": "NYSE", "BAC": "NYSE", "WFC": "NYSE", "GS": "NYSE", "MS": "NYSE",
+            "C": "NYSE", "V": "NYSE", "MA": "NYSE", "AXP": "NYSE", "BLK": "NYSE",
+            "BRK.A": "NYSE", "BRK.B": "NYSE", "JNJ": "NYSE", "UNH": "NYSE",
+            "PFE": "NYSE", "ABBV": "NYSE", "TMO": "NYSE", "MRK": "NYSE", "ABT": "NYSE",
+            "DHR": "NYSE", "LLY": "NYSE", "BMY": "NYSE", "WMT": "NYSE", "HD": "NYSE",
+            "MCD": "NYSE", "NKE": "NYSE", "TGT": "NYSE", "LOW": "NYSE", "DG": "NYSE",
+            "PG": "NYSE", "KO": "NYSE", "PEP": "NYSE", "DIS": "NYSE", "XOM": "NYSE",
+            "CVX": "NYSE", "COP": "NYSE", "SLB": "NYSE", "EOG": "NYSE", "MPC": "NYSE",
+            "PSX": "NYSE", "VLO": "NYSE", "OXY": "NYSE", "HAL": "NYSE",
+            
+            // ETFs (various exchanges)
+            "SPY": "NYSE Arca", "VOO": "NYSE Arca", "QQQ": "NASDAQ", "VTI": "NYSE Arca",
+            "IVV": "NYSE Arca", "VEA": "NYSE Arca", "VWO": "NYSE Arca", "BND": "NYSE Arca",
+            "VNQ": "NYSE Arca", "GLD": "NYSE Arca", "SLV": "NYSE Arca", "TLT": "NASDAQ",
+            "EFA": "NYSE Arca", "EEM": "NYSE Arca", "XLF": "NYSE Arca", "XLK": "NYSE Arca",
+            "XLE": "NYSE Arca", "XLV": "NYSE Arca", "XLI": "NYSE Arca", "XLP": "NYSE Arca",
+            "XLY": "NYSE Arca", "XLU": "NYSE Arca", "XLB": "NYSE Arca", "XLRE": "NYSE Arca"
+        };
     }
 
     /**
-     * Enrich a single stock with company name
+     * Enrich a single stock with company name and exchange
      * @param {Object} stock - Stock object with symbol
      * @param {Object} adapters - Available API adapters
-     * @returns {Promise<Object>} Stock with enriched name
+     * @returns {Promise<Object>} Stock with enriched name and exchange
      */
     async enrichStockName(stock, adapters = {}) {
         try {
-            // If name already exists and is not null/empty, return as is
-            if (stock.name && stock.name.trim() && stock.name !== "null") {
+            // Check if we need to enrich name
+            const needsNameEnrichment = !stock.name || stock.name.trim() === "" || stock.name === "null" || stock.name === stock.symbol;
+            
+            // Check if we need to enrich exchange
+            const needsExchangeEnrichment = !stock.exchange || stock.exchange === "Unknown" || stock.exchange === "null" || stock.exchange === null;
+
+            // If both name and exchange are already good, return as is
+            if (!needsNameEnrichment && !needsExchangeEnrichment) {
                 return stock;
             }
 
@@ -124,42 +159,83 @@ class StockNameEnrichmentService {
                 return stock;
             }
 
-            // Check cache first
-            const cacheKey = `stock:name:${symbol}`;
-            const cachedName = await getCache(cacheKey);
-            if (cachedName) {
-                return { ...stock, name: cachedName };
-            }
+            let enrichedName = stock.name;
+            let enrichedExchange = stock.exchange;
 
-            let enrichedName = null;
-
-            // Try to get name from API adapters
-            if (adapters.finnhub) {
-                try {
-                    const profile = await adapters.finnhub.getCompanyProfile(symbol);
-                    if (profile && profile.name) {
-                        enrichedName = profile.name;
+            // Enrich name if needed
+            if (needsNameEnrichment) {
+                // Check cache first for name
+                const nameCacheKey = `stock:name:${symbol}`;
+                const cachedName = await getCache(nameCacheKey);
+                if (cachedName) {
+                    enrichedName = cachedName;
+                } else {
+                    // Try to get name from API adapters
+                    if (adapters.finnhub) {
+                        try {
+                            const profile = await adapters.finnhub.getCompanyProfile(symbol);
+                            if (profile && profile.name) {
+                                enrichedName = profile.name;
+                                // Cache the result for 24 hours
+                                await setCache(nameCacheKey, enrichedName, 86400);
+                            }
+                        } catch (error) {
+                            console.log(`Failed to get name from Finnhub for ${symbol}:`, error.message);
+                        }
                     }
-                } catch (error) {
-                    console.log(`Failed to get name from Finnhub for ${symbol}:`, error.message);
+
+                    // If no name from API, use static mapping
+                    if (!enrichedName || enrichedName === symbol) {
+                        enrichedName = this.staticNames[symbol] || symbol;
+                        // Cache the static result for 24 hours
+                        await setCache(nameCacheKey, enrichedName, 86400);
+                    }
                 }
             }
 
-            // If no name from API, use static mapping
-            if (!enrichedName) {
-                enrichedName = this.staticNames[symbol] || symbol;
+            // Enrich exchange if needed
+            if (needsExchangeEnrichment) {
+                // Check cache first for exchange
+                const exchangeCacheKey = `stock:exchange:${symbol}`;
+                const cachedExchange = await getCache(exchangeCacheKey);
+                if (cachedExchange) {
+                    enrichedExchange = cachedExchange;
+                } else {
+                    // Try to get exchange from API adapters
+                    if (adapters.finnhub) {
+                        try {
+                            const profile = await adapters.finnhub.getCompanyProfile(symbol);
+                            if (profile && profile.exchange) {
+                                enrichedExchange = profile.exchange;
+                                // Cache the result for 24 hours
+                                await setCache(exchangeCacheKey, enrichedExchange, 86400);
+                            }
+                        } catch (error) {
+                            console.log(`Failed to get exchange from Finnhub for ${symbol}:`, error.message);
+                        }
+                    }
+
+                    // If no exchange from API, use static mapping
+                    if (!enrichedExchange || enrichedExchange === "Unknown" || enrichedExchange === null) {
+                        enrichedExchange = this.staticExchanges[symbol] || "Unknown";
+                        // Cache the static result for 24 hours
+                        await setCache(exchangeCacheKey, enrichedExchange, 86400);
+                    }
+                }
             }
 
-            // Cache the result for 24 hours
-            await setCache(cacheKey, enrichedName, 86400);
-
-            return { ...stock, name: enrichedName };
-        } catch (error) {
-            console.error(`Error enriching name for ${stock.symbol}:`, error.message);
-            // Fallback to static name or symbol
             return { 
                 ...stock, 
-                name: this.staticNames[stock.symbol] || stock.symbol 
+                name: enrichedName,
+                exchange: enrichedExchange
+            };
+        } catch (error) {
+            console.error(`Error enriching ${stock.symbol}:`, error.message);
+            // Fallback to static mappings
+            return { 
+                ...stock, 
+                name: this.staticNames[stock.symbol] || stock.symbol,
+                exchange: this.staticExchanges[stock.symbol] || stock.exchange || "Unknown"
             };
         }
     }
@@ -192,6 +268,17 @@ class StockNameEnrichmentService {
     async getCompanyName(symbol, adapters = {}) {
         const enrichedStock = await this.enrichStockName({ symbol }, adapters);
         return enrichedStock.name;
+    }
+
+    /**
+     * Get exchange for a symbol (utility method)
+     * @param {String} symbol - Stock symbol
+     * @param {Object} adapters - Available API adapters
+     * @returns {Promise<String>} Exchange name
+     */
+    async getExchange(symbol, adapters = {}) {
+        const enrichedStock = await this.enrichStockName({ symbol }, adapters);
+        return enrichedStock.exchange;
     }
 
     /**

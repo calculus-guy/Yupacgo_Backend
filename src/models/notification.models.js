@@ -15,7 +15,7 @@ const NotificationSchema = new mongoose.Schema(
 
         type: {
             type: String,
-            enum: ["price_alert", "recommendation", "watchlist", "profile", "system"],
+            enum: ["price_alert", "recommendation", "watchlist", "portfolio", "profile", "system"],
             required: true,
             index: true
         },

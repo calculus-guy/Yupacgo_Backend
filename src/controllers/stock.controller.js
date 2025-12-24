@@ -71,9 +71,17 @@ exports.getPriceComparison = async (req, res) => {
 
         const comparison = await priceAggregator.getPriceComparison(symbol);
 
+        // Enrich with company name
+        const FinnhubAdapter = require("../services/adapters/finnhubAdapter");
+        const adapters = {
+            finnhub: new FinnhubAdapter(process.env.FINNHUB_API_KEY)
+        };
+        
+        const enrichedComparison = await stockNameEnrichment.enrichStockName(comparison, adapters);
+
         return res.json({
             status: "success",
-            data: comparison
+            data: enrichedComparison
         });
     } catch (error) {
         return res.status(500).json({

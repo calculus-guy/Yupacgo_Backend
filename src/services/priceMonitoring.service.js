@@ -1,6 +1,7 @@
 const Watchlist = require("../models/watchlist.models");
 const Notification = require("../models/notification.models");
 const priceAggregator = require("./priceAggregator.service");
+const { createNotification } = require("./notification.service");
 
 /**
  * Check all watchlists and send alerts for price changes
@@ -86,13 +87,13 @@ exports.monitorWatchlistPrices = async () => {
                         });
 
                         if (!recentAlert) {
-                            // Create notification
-                            await Notification.create({
-                                userId: watchlist.userId._id,
-                                type: "price_alert",
-                                title: `🚨 Price Alert: ${watchlist.name || watchlist.symbol}`,
-                                message: alertMessage,
-                                metadata: {
+                            // Create notification using notification service
+                            await createNotification(
+                                watchlist.userId._id,
+                                "price_alert",
+                                `🚨 Price Alert: ${watchlist.name || watchlist.symbol}`,
+                                alertMessage,
+                                {
                                     symbol: watchlist.symbol,
                                     name: watchlist.name,
                                     currentPrice,
@@ -103,7 +104,7 @@ exports.monitorWatchlistPrices = async () => {
                                     confidence: priceData.confidence,
                                     timestamp: new Date().toISOString()
                                 }
-                            });
+                            );
 
                             alertsCreated++;
                             console.log(`✅ Alert created for ${watchlist.userId.firstname}: ${alertMessage}`);

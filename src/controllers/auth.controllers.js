@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { sendWelcomeEmail } = require("../services/email.service");
 const { logActivity } = require("../services/activityLogger.service");
+const { createWelcomeNotification } = require("../services/notification.service");
 
 exports.signup = async (req, res) => {
     try {
@@ -27,6 +28,11 @@ exports.signup = async (req, res) => {
         // Send welcome email (async, don't wait)
         sendWelcomeEmail(email, firstname).catch(err => 
             console.error("Failed to send welcome email:", err.message)
+        );
+
+        // Create welcome notification (async, don't wait)
+        createWelcomeNotification(user._id, firstname).catch(err =>
+            console.error("Failed to create welcome notification:", err.message)
         );
 
         // Log signup activity

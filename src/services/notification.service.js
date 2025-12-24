@@ -28,6 +28,7 @@ async function createNotification(userId, type, title, message, data = {}) {
                 price_alert: "priceAlerts",
                 recommendation: "recommendations",
                 watchlist: "watchlistUpdates",
+                portfolio: "portfolioUpdates",
                 profile: "profileUpdates",
                 system: "systemAnnouncements"
             };
@@ -66,15 +67,19 @@ async function createNotification(userId, type, title, message, data = {}) {
 /**
  * Create price alert notification
  */
-async function createPriceAlert(userId, symbol, price, change, changePercent) {
-    const title = `Price Alert: ${symbol}`;
-    const message = `${symbol} ${change > 0 ? "increased" : "decreased"} by ${Math.abs(changePercent).toFixed(2)}% to $${price.toFixed(2)}`;
+async function createPriceAlert(userId, symbol, currentPrice, targetPrice, condition, priceChange) {
+    const title = `🚨 Price Alert: ${symbol}`;
+    const percentageChange = priceChange ? ` (${priceChange})` : '';
+    const message = condition === "above" 
+        ? `${symbol} has reached $${currentPrice.toFixed(2)}${percentageChange} - Target: Above $${targetPrice}`
+        : `${symbol} has dropped to $${currentPrice.toFixed(2)}${percentageChange} - Target: Below $${targetPrice}`;
     
     return await createNotification(userId, "price_alert", title, message, {
         symbol,
-        price,
-        change,
-        changePercent
+        currentPrice,
+        targetPrice,
+        condition,
+        priceChange
     });
 }
 
@@ -98,6 +103,35 @@ async function createWatchlistNotification(userId, message) {
     const title = "Watchlist Update";
     
     return await createNotification(userId, "watchlist", title, message, {});
+}
+
+/**
+ * Create portfolio update notification
+ */
+async function createPortfolioNotification(userId, message, data = {}) {
+    const title = "Portfolio Update";
+    
+    return await createNotification(userId, "portfolio", title, message, data);
+}
+
+/**
+ * Create system notification
+ */
+async function createSystemNotification(userId, title, message, data = {}) {
+    return await createNotification(userId, "system", title, message, data);
+}
+
+/**
+ * Create welcome notification
+ */
+async function createWelcomeNotification(userId, name) {
+    const title = "Welcome to Yupacgo! 🎉";
+    const message = `Hi ${name}! Welcome to your personalized investment platform. Complete your onboarding to get started with personalized recommendations.`;
+    
+    return await createNotification(userId, "system", title, message, {
+        type: "welcome",
+        name
+    });
 }
 
 /**
@@ -173,6 +207,9 @@ module.exports = {
     createPriceAlert,
     createRecommendationNotification,
     createWatchlistNotification,
+    createPortfolioNotification,
+    createSystemNotification,
+    createWelcomeNotification,
     getUserNotifications,
     getUnreadCount,
     markAsRead,
