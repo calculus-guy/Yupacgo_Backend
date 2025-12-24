@@ -9,7 +9,7 @@ const OTPSchema = new mongoose.Schema(
         userId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "User",
-            required: true,
+            required: false, // Not required for password reset (use email instead)
             index: true
         },
 
@@ -25,7 +25,7 @@ const OTPSchema = new mongoose.Schema(
 
         purpose: {
             type: String,
-            enum: ["password_change", "email_verification"],
+            enum: ["password_change", "email_verification", "password_reset"],
             required: true
         },
 
