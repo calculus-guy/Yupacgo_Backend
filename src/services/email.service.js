@@ -25,7 +25,11 @@ const initializeTransporter = () => {
             auth: {
                 user: process.env.SMTP_USER,
                 pass: process.env.SMTP_PASS
-            }
+            },
+            // Add timeout and connection options
+            connectionTimeout: 10000, // 10 seconds
+            greetingTimeout: 5000,    // 5 seconds
+            socketTimeout: 10000      // 10 seconds
         });
 
         console.log("✅ Email service initialized");
@@ -37,13 +41,25 @@ const initializeTransporter = () => {
 };
 
 /**
+ * Get or create transporter
+ */
+const getTransporter = () => {
+    if (!transporter) {
+        transporter = initializeTransporter();
+    }
+    return transporter;
+};
+
+/**
  * Send OTP email
  * @param {String} email - Recipient email
  * @param {String} otp - OTP code
  * @param {String} purpose - Purpose of OTP
  */
 const sendOTP = async (email, otp, purpose = "password_change") => {
-    if (!transporter) {
+    const currentTransporter = getTransporter();
+    
+    if (!currentTransporter) {
         console.log("Email not configured, OTP not sent");
         return false;
     }
@@ -137,7 +153,7 @@ const sendOTP = async (email, otp, purpose = "password_change") => {
             `;
         }
 
-        await transporter.sendMail({
+        await currentTransporter.sendMail({
             from: `"Yupacgo" <${process.env.SMTP_USER}>`,
             to: email,
             subject: subject,
@@ -159,7 +175,9 @@ const sendOTP = async (email, otp, purpose = "password_change") => {
  * @param {String} message - Notification message
  */
 const sendNotificationEmail = async (email, title, message) => {
-    if (!transporter) {
+    const currentTransporter = getTransporter();
+    
+    if (!currentTransporter) {
         return false;
     }
 
@@ -194,7 +212,7 @@ const sendNotificationEmail = async (email, title, message) => {
             </html>
         `;
 
-        await transporter.sendMail({
+        await currentTransporter.sendMail({
             from: `"JDInvestor" <${process.env.SMTP_USER}>`,
             to: email,
             subject: title,
@@ -214,7 +232,9 @@ const sendNotificationEmail = async (email, title, message) => {
  * @param {String} name - User's name
  */
 const sendWelcomeEmail = async (email, name) => {
-    if (!transporter) {
+    const currentTransporter = getTransporter();
+    
+    if (!currentTransporter) {
         return false;
     }
 
@@ -257,7 +277,7 @@ const sendWelcomeEmail = async (email, name) => {
             </html>
         `;
 
-        await transporter.sendMail({
+        await currentTransporter.sendMail({
             from: `"JDInvestor" <${process.env.SMTP_USER}>`,
             to: email,
             subject: "Welcome to JDInvestor!",
@@ -273,6 +293,7 @@ const sendWelcomeEmail = async (email, name) => {
 
 module.exports = {
     initializeTransporter,
+    getTransporter,
     sendOTP,
     sendNotificationEmail,
     sendWelcomeEmail
