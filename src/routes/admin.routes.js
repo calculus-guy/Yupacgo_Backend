@@ -34,4 +34,34 @@ router.get("/monitoring-stats", adminAuth, getMonitoringStats);
 router.post("/trigger-price-monitoring", adminAuth, triggerPriceMonitoring);
 router.post("/trigger-cleanup", adminAuth, triggerCleanup);
 
+// Email testing endpoint (temporary)
+router.post("/test-email", async (req, res) => {
+    try {
+        const { sendOTP } = require("../services/email.service");
+        const testOTP = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        console.log(`🧪 Testing email with OTP: ${testOTP}`);
+        
+        const result = await sendOTP("sakariyauabdullateef993@gmail.com", testOTP, "password_reset");
+        
+        if (result) {
+            res.json({
+                status: "success",
+                message: "Test email sent successfully",
+                otp: testOTP
+            });
+        } else {
+            res.status(500).json({
+                status: "error",
+                message: "Failed to send test email"
+            });
+        }
+    } catch (error) {
+        res.status(500).json({
+            status: "error",
+            message: error.message
+        });
+    }
+});
+
 module.exports = router;
