@@ -4,7 +4,11 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "node verify-deployment.js",
+    "test": "node server.js --test-mode",
+    "lint": "echo 'Linting not configured' && exit 0",
+    "verify": "node verify-deployment.js"
   },
   "keywords": [],
   "author": "Abdul-Lateef",
