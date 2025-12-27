@@ -1,22 +1,17 @@
 const UserProfile = require("../models/userProfile.models");
 const RecommendationSession = require("../models/recommendationSession.models");
-const FinnhubAdapter = require("./adapters/finnhubAdapter");
-const AlphaVantageAdapter = require("./adapters/alphaVantageAdapter");
-const TwelveDataAdapter = require("./adapters/twelveDataAdapter");
-const { getCache, setCache } = require("../config/redis");
+const providerManager = require("./providerManager.service");
+const smartCache = require("./smartCache.service");
 const stockNameEnrichment = require("./stockNameEnrichment.service");
 
 /**
- * API-Driven Recommendation Engine
- * Fetches stocks directly from APIs, no database seeding required
+ * API-Driven Recommendation Engine (Optimized)
+ * Now uses Provider Manager for intelligent single-provider requests
+ * Eliminates parallel fetching to prevent rate limiting
  */
 class RecommendationEngineV2 {
     constructor() {
-        this.adapters = {
-            finnhub: new FinnhubAdapter(process.env.FINNHUB_API_KEY),
-            alphavantage: new AlphaVantageAdapter(process.env.ALPHAVANTAGE_API_KEY),
-            twelvedata: new TwelveDataAdapter(process.env.TWELVEDATA_API_KEY)
-        };
+        console.log("✅ Recommendation Engine V2 initialized with Provider Manager integration");
     }
 
     /**
@@ -40,11 +35,8 @@ class RecommendationEngineV2 {
                 throw new Error("No stocks available from APIs at the moment");
             }
 
-            // Enrich stocks with company names
-            const adapters = {
-                finnhub: this.adapters.finnhub
-            };
-            candidateStocks = await stockNameEnrichment.enrichStockNames(candidateStocks, adapters);
+            // Enrich stocks with company names using Provider Manager
+            candidateStocks = await this.enrichStockNames(candidateStocks);
 
             // Filter stocks by profile constraints
             const filteredStocks = this.filterStocksByProfile(candidateStocks, profile);
@@ -122,106 +114,284 @@ class RecommendationEngineV2 {
     }
 
     /**
-     * Fetch candidate stocks from APIs based on profile
+     * Fetch candidate stocks using Provider Manager (optimized)
      * @param {Object} profile - User profile
      * @returns {Promise<Array>} Array of stocks
      */
     async fetchCandidateStocks(profile) {
         try {
             // Check cache first
-            const cacheKey = `stocks:profile:${profile.profileType}`;
-            const cached = await getCache(cacheKey);
-            if (cached) {
-                console.log("✅ Using cached stocks");
-                return cached;
+            const cacheKey = smartCache.generateKey('recommendations', profile.profileType);
+            const cached = await smartCache.get(cacheKey);
+            if (cached && !cached.metadata.isStale) {
+                console.log("✅ Using cached recommendation stocks");
+                return cached.data;
             }
 
-            console.log("🔄 Fetching stocks from ALL 3 APIs...");
+            console.log("🔄 Fetching stocks using Provider Manager (single provider approach)...");
 
             const stocks = [];
 
-            // Fetch from ALL providers in parallel for better coverage
-            const fetchPromises = [];
+            // Strategy: Use Provider Manager to fetch different types of stocks
+            // This eliminates parallel fetching while maintaining diversity
 
-            // 1. Fetch by preferred sectors (from Finnhub)
+            // 1. Fetch by preferred sectors (using primary available provider)
             if (profile.preferredSectors && profile.preferredSectors.length > 0) {
                 for (const sector of profile.preferredSectors.slice(0, 2)) {
-                    fetchPromises.push(
-                        this.adapters.finnhub.getStocksBySector(sector)
-                            .catch(err => {
-                                console.error(`Finnhub sector ${sector} error:`, err.message);
-                                return [];
-                            })
-                    );
-                }
-            }
-
-            // 2. Fetch popular stocks from Twelve Data
-            fetchPromises.push(
-                this.adapters.twelvedata.getPopularStocks()
-                    .catch(err => {
-                        console.error("Twelve Data error:", err.message);
-                        return [];
-                    })
-            );
-
-            // 3. Fetch popular stocks from Finnhub (different set)
-            fetchPromises.push(
-                this.adapters.finnhub.getPopularStocks()
-                    .catch(err => {
-                        console.error("Finnhub popular error:", err.message);
-                        return [];
-                    })
-            );
-
-            // 4. Fetch trending from Alpha Vantage (for all profiles, not just aggressive)
-            fetchPromises.push(
-                this.adapters.alphavantage.getTrending()
-                    .catch(err => {
-                        console.error("Alpha Vantage error:", err.message);
-                        return [];
-                    })
-            );
-
-            // Wait for all fetches to complete
-            const results = await Promise.all(fetchPromises);
-
-            // Flatten all results
-            results.forEach(result => {
-                if (Array.isArray(result)) {
-                    stocks.push(...result);
-                }
-            });
-
-            // Deduplicate by symbol
-            const uniqueStocks = [];
-            const seen = new Set();
-            const providerCount = { finnhub: 0, alphavantage: 0, twelvedata: 0 };
-
-            for (const stock of stocks) {
-                if (stock && stock.symbol && !seen.has(stock.symbol)) {
-                    seen.add(stock.symbol);
-                    uniqueStocks.push(stock);
-                    
-                    // Track provider distribution
-                    if (stock.provider) {
-                        providerCount[stock.provider] = (providerCount[stock.provider] || 0) + 1;
+                    try {
+                        console.log(`🔍 Fetching ${sector} sector stocks...`);
+                        const sectorStocks = await this.fetchStocksBySector(sector);
+                        if (sectorStocks && sectorStocks.length > 0) {
+                            stocks.push(...sectorStocks.slice(0, 10)); // Limit per sector
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to fetch ${sector} stocks:`, error.message);
                     }
                 }
             }
 
-            // Cache for 5 minutes
-            await setCache(cacheKey, uniqueStocks, 300);
+            // 2. Fetch popular stocks (using primary available provider)
+            try {
+                console.log("🔍 Fetching popular stocks...");
+                const popularStocks = await this.fetchPopularStocks();
+                if (popularStocks && popularStocks.length > 0) {
+                    stocks.push(...popularStocks.slice(0, 15));
+                }
+            } catch (error) {
+                console.warn("Failed to fetch popular stocks:", error.message);
+            }
 
-            console.log(`✅ Fetched ${uniqueStocks.length} unique stocks from APIs`);
-            console.log(`   - Finnhub: ${providerCount.finnhub} stocks`);
-            console.log(`   - Alpha Vantage: ${providerCount.alphavantage} stocks`);
-            console.log(`   - Twelve Data: ${providerCount.twelvedata} stocks`);
+            // 3. Fetch trending stocks (using primary available provider)
+            try {
+                console.log("🔍 Fetching trending stocks...");
+                const trendingStocks = await this.fetchTrendingStocks();
+                if (trendingStocks && trendingStocks.length > 0) {
+                    stocks.push(...trendingStocks.slice(0, 10));
+                }
+            } catch (error) {
+                console.warn("Failed to fetch trending stocks:", error.message);
+            }
+
+            // 4. Add some default high-quality stocks if we don't have enough
+            if (stocks.length < 10) {
+                const defaultStocks = await this.fetchDefaultStocks();
+                stocks.push(...defaultStocks);
+            }
+
+            // Deduplicate by symbol
+            const uniqueStocks = [];
+            const seen = new Set();
+
+            for (const stock of stocks) {
+                if (stock && stock.symbol && !seen.has(stock.symbol)) {
+                    seen.add(stock.symbol);
+                    uniqueStocks.push({
+                        ...stock,
+                        source: 'provider_manager',
+                        fetchedAt: new Date().toISOString()
+                    });
+                }
+            }
+
+            // Cache the results
+            await smartCache.set(cacheKey, uniqueStocks, 300); // 5 minutes cache
+
+            console.log(`✅ Fetched ${uniqueStocks.length} unique stocks using optimized approach`);
             
             return uniqueStocks;
         } catch (error) {
             console.error("Error fetching candidate stocks:", error.message);
+            
+            // Try to return cached data even if stale
+            const staleCache = await smartCache.getStale(cacheKey);
+            if (staleCache) {
+                console.log("⚠️ Returning stale cached stocks due to fetch error");
+                return staleCache.data;
+            }
+            
             return [];
+        }
+    }
+
+    /**
+     * Fetch stocks by sector using Provider Manager
+     * @param {String} sector - Sector name
+     * @returns {Promise<Array>} Sector stocks
+     */
+    async fetchStocksBySector(sector) {
+        try {
+            // Use Provider Manager to get sector stocks from the best available provider
+            const providers = providerManager.providers;
+            
+            for (const provider of providers) {
+                if (provider.status === 'disabled') continue;
+                
+                try {
+                    if (provider.adapter.getStocksBySector) {
+                        const stocks = await provider.adapter.getStocksBySector(sector);
+                        if (stocks && stocks.length > 0) {
+                            console.log(`✅ Got ${stocks.length} ${sector} stocks from ${provider.name}`);
+                            return stocks.map(stock => ({
+                                ...stock,
+                                provider: provider.name,
+                                source: 'sector_fetch'
+                            }));
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`${provider.name} failed for sector ${sector}:`, error.message);
+                    continue;
+                }
+            }
+            
+            return [];
+        } catch (error) {
+            console.error(`Error fetching ${sector} stocks:`, error.message);
+            return [];
+        }
+    }
+
+    /**
+     * Fetch popular stocks using Provider Manager
+     * @returns {Promise<Array>} Popular stocks
+     */
+    async fetchPopularStocks() {
+        try {
+            const providers = providerManager.providers;
+            
+            for (const provider of providers) {
+                if (provider.status === 'disabled') continue;
+                
+                try {
+                    if (provider.adapter.getPopularStocks) {
+                        const stocks = await provider.adapter.getPopularStocks();
+                        if (stocks && stocks.length > 0) {
+                            console.log(`✅ Got ${stocks.length} popular stocks from ${provider.name}`);
+                            return stocks.map(stock => ({
+                                ...stock,
+                                provider: provider.name,
+                                source: 'popular_fetch'
+                            }));
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`${provider.name} failed for popular stocks:`, error.message);
+                    continue;
+                }
+            }
+            
+            return [];
+        } catch (error) {
+            console.error("Error fetching popular stocks:", error.message);
+            return [];
+        }
+    }
+
+    /**
+     * Fetch trending stocks using Provider Manager
+     * @returns {Promise<Array>} Trending stocks
+     */
+    async fetchTrendingStocks() {
+        try {
+            const providers = providerManager.providers;
+            
+            for (const provider of providers) {
+                if (provider.status === 'disabled') continue;
+                
+                try {
+                    if (provider.adapter.getTrending) {
+                        const stocks = await provider.adapter.getTrending();
+                        if (stocks && stocks.length > 0) {
+                            console.log(`✅ Got ${stocks.length} trending stocks from ${provider.name}`);
+                            return stocks.map(stock => ({
+                                ...stock,
+                                provider: provider.name,
+                                source: 'trending_fetch'
+                            }));
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`${provider.name} failed for trending stocks:`, error.message);
+                    continue;
+                }
+            }
+            
+            return [];
+        } catch (error) {
+            console.error("Error fetching trending stocks:", error.message);
+            return [];
+        }
+    }
+
+    /**
+     * Get default high-quality stocks as fallback
+     * @returns {Promise<Array>} Default stocks
+     */
+    async fetchDefaultStocks() {
+        const defaultSymbols = [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA',
+            'META', 'NVDA', 'JPM', 'V', 'WMT',
+            'DIS', 'NFLX', 'ADBE', 'CRM', 'ORCL'
+        ];
+
+        const stocks = [];
+        
+        for (const symbol of defaultSymbols.slice(0, 10)) {
+            try {
+                const quote = await providerManager.getQuote(symbol);
+                if (quote) {
+                    stocks.push({
+                        symbol: quote.symbol,
+                        name: quote.name,
+                        price: quote.price,
+                        exchange: quote.exchange,
+                        provider: quote.metadata?.provider,
+                        source: 'default_fallback'
+                    });
+                }
+            } catch (error) {
+                console.warn(`Failed to get default stock ${symbol}:`, error.message);
+            }
+        }
+
+        console.log(`✅ Got ${stocks.length} default fallback stocks`);
+        return stocks;
+    }
+
+    /**
+     * Enrich stock names using Provider Manager
+     * @param {Array} stocks - Array of stocks to enrich
+     * @returns {Promise<Array>} Enriched stocks
+     */
+    async enrichStockNames(stocks) {
+        try {
+            const enrichedStocks = [];
+            
+            for (const stock of stocks) {
+                if (!stock.name || stock.name === stock.symbol || stock.name.trim() === "") {
+                    try {
+                        const profile = await providerManager.getCompanyProfile(stock.symbol);
+                        if (profile && profile.name) {
+                            enrichedStocks.push({
+                                ...stock,
+                                name: profile.name,
+                                exchange: profile.exchange || stock.exchange
+                            });
+                        } else {
+                            enrichedStocks.push(stock);
+                        }
+                    } catch (error) {
+                        enrichedStocks.push(stock);
+                    }
+                } else {
+                    enrichedStocks.push(stock);
+                }
+            }
+            
+            return enrichedStocks;
+        } catch (error) {
+            console.error("Error enriching stock names:", error.message);
+            return stocks;
         }
     }
 

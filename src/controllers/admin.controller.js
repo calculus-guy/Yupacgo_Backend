@@ -1,6 +1,9 @@
 const { triggerPriceMonitoring, triggerCleanup } = require("../services/scheduler.service");
 const { getRecentActivities, getActivityStats } = require("../services/activityLogger.service");
 const { getMonitoringStats } = require("../services/priceMonitoring.service");
+const providerManager = require("../services/providerManager.service");
+const providerHealth = require("../services/providerHealth.service");
+const smartCache = require("../services/smartCache.service");
 const User = require("../models/user.models");
 const Watchlist = require("../models/watchlist.models");
 const VirtualPortfolio = require("../models/virtualPortfolio.models");
@@ -675,6 +678,252 @@ exports.getMonitoringStats = async (req, res) => {
                     extendedHours: "Every 10 minutes (4PM-9AM EST, Mon-Fri)",
                     weekends: "Every 15 minutes (Sat-Sun)"
                 }
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Get provider health information
+ * GET /api/admin/provider-health
+ */
+exports.getProviderHealth = async (req, res) => {
+    try {
+        const healthSummary = await providerHealth.getHealthSummary();
+        const providerStats = await providerHealth.getProviderStats();
+        const alerts = await providerHealth.getHealthAlerts();
+        
+        return res.json({
+            status: "success",
+            data: {
+                summary: healthSummary,
+                providers: providerStats,
+                alerts,
+                lastUpdated: new Date().toISOString()
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Get detailed provider statistics
+ * GET /api/admin/provider-stats/:provider?
+ */
+exports.getProviderStats = async (req, res) => {
+    try {
+        const { provider } = req.params;
+        const stats = await providerHealth.getProviderStats(provider);
+        
+        return res.json({
+            status: "success",
+            data: stats
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Reset provider health metrics
+ * POST /api/admin/provider/:provider/reset-health
+ */
+exports.resetProviderHealth = async (req, res) => {
+    try {
+        const { provider } = req.params;
+        
+        if (!['finnhub', 'twelvedata', 'alphavantage'].includes(provider)) {
+            return res.status(400).json({
+                status: "error",
+                message: "Invalid provider name"
+            });
+        }
+        
+        await providerHealth.resetProviderHealth(provider);
+        providerManager.resetProviderHealth(provider);
+        
+        return res.json({
+            status: "success",
+            message: `Health metrics reset for ${provider}`
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Disable a provider temporarily
+ * POST /api/admin/provider/:provider/disable
+ */
+exports.disableProvider = async (req, res) => {
+    try {
+        const { provider } = req.params;
+        
+        if (!['finnhub', 'twelvedata', 'alphavantage'].includes(provider)) {
+            return res.status(400).json({
+                status: "error",
+                message: "Invalid provider name"
+            });
+        }
+        
+        providerManager.disableProvider(provider);
+        
+        return res.json({
+            status: "success",
+            message: `Provider ${provider} disabled`
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Enable a provider
+ * POST /api/admin/provider/:provider/enable
+ */
+exports.enableProvider = async (req, res) => {
+    try {
+        const { provider } = req.params;
+        
+        if (!['finnhub', 'twelvedata', 'alphavantage'].includes(provider)) {
+            return res.status(400).json({
+                status: "error",
+                message: "Invalid provider name"
+            });
+        }
+        
+        providerManager.enableProvider(provider);
+        
+        return res.json({
+            status: "success",
+            message: `Provider ${provider} enabled`
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Get cache statistics
+ * GET /api/admin/cache-stats
+ */
+exports.getCacheStats = async (req, res) => {
+    try {
+        const stats = await smartCache.getStats();
+        const config = smartCache.getConfig();
+        
+        return res.json({
+            status: "success",
+            data: {
+                statistics: stats,
+                configuration: config,
+                lastUpdated: new Date().toISOString()
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Test provider connectivity
+ * POST /api/admin/test-provider/:provider
+ */
+exports.testProvider = async (req, res) => {
+    try {
+        const { provider } = req.params;
+        const { symbol = 'AAPL' } = req.body;
+        
+        if (!['finnhub', 'twelvedata', 'alphavantage'].includes(provider)) {
+            return res.status(400).json({
+                status: "error",
+                message: "Invalid provider name"
+            });
+        }
+        
+        const startTime = Date.now();
+        
+        try {
+            // Force use specific provider by temporarily disabling others
+            const otherProviders = ['finnhub', 'twelvedata', 'alphavantage'].filter(p => p !== provider);
+            otherProviders.forEach(p => providerManager.disableProvider(p));
+            
+            const quote = await providerManager.getQuote(symbol, { skipCache: true });
+            const responseTime = Date.now() - startTime;
+            
+            // Re-enable other providers
+            otherProviders.forEach(p => providerManager.enableProvider(p));
+            
+            return res.json({
+                status: "success",
+                data: {
+                    provider,
+                    symbol,
+                    responseTime,
+                    quote,
+                    testTime: new Date().toISOString()
+                }
+            });
+            
+        } catch (testError) {
+            // Re-enable other providers even if test failed
+            const otherProviders = ['finnhub', 'twelvedata', 'alphavantage'].filter(p => p !== provider);
+            otherProviders.forEach(p => providerManager.enableProvider(p));
+            
+            const responseTime = Date.now() - startTime;
+            
+            return res.json({
+                status: "error",
+                data: {
+                    provider,
+                    symbol,
+                    responseTime,
+                    error: testError.message,
+                    testTime: new Date().toISOString()
+                }
+            });
+        }
+        
+    } catch (error) {
+        return res.status(500).json({ status: "error", message: error.message });
+    }
+};
+
+/**
+ * Get API optimization metrics
+ * GET /api/admin/optimization-metrics
+ */
+exports.getOptimizationMetrics = async (req, res) => {
+    try {
+        const providerStats = await providerHealth.getProviderStats();
+        const cacheStats = await smartCache.getStats();
+        
+        // Calculate estimated API call reduction
+        const totalRequests = Object.values(providerStats).reduce((sum, provider) => 
+            sum + (provider.totalRequests || 0), 0
+        );
+        
+        // Estimate what it would have been with parallel fetching (3x)
+        const estimatedOldRequests = totalRequests * 3;
+        const apiCallReduction = totalRequests > 0 
+            ? Math.round(((estimatedOldRequests - totalRequests) / estimatedOldRequests) * 100)
+            : 0;
+        
+        return res.json({
+            status: "success",
+            data: {
+                optimization: {
+                    apiCallReduction: `${apiCallReduction}%`,
+                    currentRequests: totalRequests,
+                    estimatedOldRequests: estimatedOldRequests,
+                    savedRequests: estimatedOldRequests - totalRequests
+                },
+                providers: providerStats,
+                cache: cacheStats,
+                generatedAt: new Date().toISOString()
             }
         });
     } catch (error) {

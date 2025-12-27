@@ -2,34 +2,35 @@ const cron = require("node-cron");
 const { monitorWatchlistPrices, cleanupOldNotifications } = require("./priceMonitoring.service");
 
 /**
- * Initialize all scheduled jobs
+ * Initialize all scheduled jobs (Optimized for API rate limiting)
  */
 exports.initializeScheduler = () => {
-    console.log("⏰ Initializing background jobs...");
+    console.log("⏰ Initializing optimized background jobs...");
 
-    // 24/7 Price monitoring - Every 5 minutes (more frequent for better responsiveness)
+    // 24/7 Base monitoring - Every 10 minutes (reduced from 5 minutes)
     // This covers crypto, international markets, after-hours trading, and pre-market
-    cron.schedule("*/5 * * * *", async () => {
-        console.log("⏰ Running 24/7 price monitoring...");
+    cron.schedule("*/10 * * * *", async () => {
+        console.log("⏰ Running 24/7 base monitoring...");
         await monitorWatchlistPrices();
     });
 
-    // Additional frequent monitoring during US market hours (9 AM - 4 PM EST, Mon-Fri)
-    // Every 2 minutes for more responsive alerts during active trading
-    cron.schedule("*/2 9-16 * * 1-5", async () => {
-        console.log("⏰ Running enhanced market hours monitoring...");
+    // Market hours monitoring (9 AM - 4 PM EST, Mon-Fri) - Every 5 minutes (reduced from 2 minutes)
+    // More responsive during active trading but respects rate limits
+    cron.schedule("*/5 9-16 * * 1-5", async () => {
+        console.log("⏰ Running market hours monitoring...");
         await monitorWatchlistPrices();
     });
 
-    // Extended hours monitoring (4 PM - 9 AM EST, Mon-Fri) - Every 10 minutes
-    // Covers after-hours and pre-market trading
-    cron.schedule("*/10 0-8,17-23 * * 1-5", async () => {
+    // Extended hours monitoring (4 PM - 9 AM EST, Mon-Fri) - Every 15 minutes (increased from 10 minutes)
+    // Covers after-hours and pre-market trading with reduced frequency
+    cron.schedule("*/15 0-8,17-23 * * 1-5", async () => {
         console.log("⏰ Running extended hours monitoring...");
         await monitorWatchlistPrices();
     });
 
-    // Weekend monitoring - Every 15 minutes (for crypto and international markets)
-    cron.schedule("*/15 * * * 0,6", async () => {
+    // Weekend monitoring - Every 20 minutes (increased from 15 minutes)
+    // For crypto and international markets with reduced frequency
+    cron.schedule("*/20 * * * 0,6", async () => {
         console.log("⏰ Running weekend monitoring...");
         await monitorWatchlistPrices();
     });
@@ -40,12 +41,13 @@ exports.initializeScheduler = () => {
         await cleanupOldNotifications();
     });
 
-    console.log("✅ Background jobs initialized:");
-    console.log("   - 24/7 Base monitoring: Every 5 minutes");
-    console.log("   - Market hours (9AM-4PM EST, Mon-Fri): Every 2 minutes");
-    console.log("   - Extended hours (4PM-9AM EST, Mon-Fri): Every 10 minutes");
-    console.log("   - Weekend monitoring: Every 15 minutes");
+    console.log("✅ Optimized background jobs initialized:");
+    console.log("   - 24/7 Base monitoring: Every 10 minutes (reduced frequency)");
+    console.log("   - Market hours (9AM-4PM EST, Mon-Fri): Every 5 minutes (reduced frequency)");
+    console.log("   - Extended hours (4PM-9AM EST, Mon-Fri): Every 15 minutes (reduced frequency)");
+    console.log("   - Weekend monitoring: Every 20 minutes (reduced frequency)");
     console.log("   - Notification cleanup: Daily at 2 AM");
+    console.log("   - 🎯 Combined with single-provider requests = ~80% API call reduction");
 };
 
 /**

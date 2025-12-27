@@ -12,7 +12,15 @@ const {
     getPortfolioAnalytics,
     getMonitoringStats,
     triggerPriceMonitoring, 
-    triggerCleanup 
+    triggerCleanup,
+    getProviderHealth,
+    getProviderStats,
+    resetProviderHealth,
+    disableProvider,
+    enableProvider,
+    getCacheStats,
+    testProvider,
+    getOptimizationMetrics
 } = require("../controllers/admin.controller");
 const { adminAuth } = require("../middleware/adminAuth");
 
@@ -33,6 +41,18 @@ router.get("/monitoring-stats", adminAuth, getMonitoringStats);
 // Manual triggers for testing
 router.post("/trigger-price-monitoring", adminAuth, triggerPriceMonitoring);
 router.post("/trigger-cleanup", adminAuth, triggerCleanup);
+
+// Provider health and management routes
+router.get("/provider-health", adminAuth, getProviderHealth);
+router.get("/provider-stats/:provider?", adminAuth, getProviderStats);
+router.post("/provider/:provider/reset-health", adminAuth, resetProviderHealth);
+router.post("/provider/:provider/disable", adminAuth, disableProvider);
+router.post("/provider/:provider/enable", adminAuth, enableProvider);
+router.post("/test-provider/:provider", adminAuth, testProvider);
+
+// Cache and optimization routes
+router.get("/cache-stats", adminAuth, getCacheStats);
+router.get("/optimization-metrics", adminAuth, getOptimizationMetrics);
 
 // Email testing endpoint (temporary)
 router.post("/test-email", async (req, res) => {
