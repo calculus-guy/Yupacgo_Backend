@@ -210,7 +210,7 @@ const sendNotificationEmail = async (email, title, message) => {
                     <div class="content">
                         <h2>${title}</h2>
                         <p>${message}</p>
-                        <p><a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}" style="background: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">View on JDInvestor</a></p>
+                        <p><a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}" style="background: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">View on Yupacgo</a></p>
                     </div>
                     <div class="footer">
                         <p>© 2025 Yupacgo. All rights reserved.</p>
@@ -221,7 +221,7 @@ const sendNotificationEmail = async (email, title, message) => {
         `;
 
         await currentTransporter.sendMail({
-            from: `"JDInvestor" <${process.env.SMTP_USER}>`,
+            from: `"Yupacgo" <${process.env.SMTP_USER}>`,
             to: email,
             subject: title,
             html: html
@@ -286,9 +286,9 @@ const sendWelcomeEmail = async (email, name) => {
         `;
 
         await currentTransporter.sendMail({
-            from: `"JDInvestor" <${process.env.SMTP_USER}>`,
+            from: `"Yupacgo" <${process.env.SMTP_USER}>`,
             to: email,
-            subject: "Welcome to JDInvestor!",
+            subject: "Welcome to Yupacgo!",
             html: html
         });
 
