@@ -4,6 +4,7 @@ const { getMonitoringStats } = require("../services/priceMonitoring.service");
 const providerManager = require("../services/providerManager.service");
 const providerHealth = require("../services/providerHealth.service");
 const smartCache = require("../services/smartCache.service");
+const stockNameEnrichment = require("../services/stockNameEnrichment.service");
 const User = require("../models/user.models");
 const Watchlist = require("../models/watchlist.models");
 const VirtualPortfolio = require("../models/virtualPortfolio.models");
@@ -290,12 +291,28 @@ exports.getStocks = async (req, res) => {
             }
         ]);
 
+        // Enrich all stock names using the stock name enrichment service
+        const enrichRecommendedStocks = recommendedStocks.map(stock => ({
+            ...stock,
+            name: stockNameEnrichment.staticNames[stock._id] || stock.name || stock._id
+        }));
+
+        const enrichWatchedStocks = watchedStocks.map(stock => ({
+            ...stock,
+            name: stockNameEnrichment.staticNames[stock._id] || stock.name || stock._id
+        }));
+
+        const enrichTradedStocks = tradedStocks.map(stock => ({
+            ...stock,
+            name: stockNameEnrichment.staticNames[stock._id] || stock._id
+        }));
+
         return res.json({
             status: "success",
             data: {
-                recommended: recommendedStocks,
-                watched: watchedStocks,
-                traded: tradedStocks
+                recommended: enrichRecommendedStocks,
+                watched: enrichWatchedStocks,
+                traded: enrichTradedStocks
             }
         });
     } catch (error) {
@@ -403,6 +420,12 @@ exports.getRecommendationAnalytics = async (req, res) => {
             }
         ]);
 
+        // Enrich stock names
+        const enrichedTopStocks = topStocks.map(stock => ({
+            ...stock,
+            name: stockNameEnrichment.staticNames[stock._id] || stock.name || stock._id
+        }));
+
         // Get recent recommendations
         const recentRecommendations = await RecommendationSession.find()
             .populate("userId", "firstname lastname email")
@@ -414,7 +437,7 @@ exports.getRecommendationAnalytics = async (req, res) => {
             data: {
                 totalRecommendations,
                 byRiskLevel,
-                topStocks,
+                topStocks: enrichedTopStocks,
                 recentRecommendations
             }
         });
@@ -451,6 +474,12 @@ exports.getWatchlistAnalytics = async (req, res) => {
             }
         ]);
 
+        // Enrich stock names
+        const enrichedTopWatchedStocks = topWatchedStocks.map(stock => ({
+            ...stock,
+            name: stockNameEnrichment.staticNames[stock._id] || stock.name || stock._id
+        }));
+
         // Get alert statistics
         const alertStats = await Watchlist.aggregate([
             {
@@ -486,7 +515,7 @@ exports.getWatchlistAnalytics = async (req, res) => {
             status: "success",
             data: {
                 totalWatchlists,
-                topWatchedStocks,
+                topWatchedStocks: enrichedTopWatchedStocks,
                 alertStats: alertStats[0] || {}
             }
         });
@@ -542,6 +571,12 @@ exports.getPortfolioAnalytics = async (req, res) => {
             }
         ]);
 
+        // Enrich stock names for traded stocks
+        const enrichedTopTradedStocks = topTradedStocks.map(stock => ({
+            ...stock,
+            name: stockNameEnrichment.staticNames[stock._id] || stock._id
+        }));
+
         // Get recent transactions
         const recentTransactions = await VirtualPortfolio.aggregate([
             {
@@ -578,13 +613,22 @@ exports.getPortfolioAnalytics = async (req, res) => {
             }
         ]);
 
+        // Enrich stock names in recent transactions
+        const enrichedRecentTransactions = recentTransactions.map(transaction => ({
+            ...transaction,
+            transactions: {
+                ...transaction.transactions,
+                name: stockNameEnrichment.staticNames[transaction.transactions.symbol] || transaction.transactions.symbol
+            }
+        }));
+
         return res.json({
             status: "success",
             data: {
                 totalPortfolios,
                 portfolioStats: portfolioStats[0] || {},
-                topTradedStocks,
-                recentTransactions
+                topTradedStocks: enrichedTopTradedStocks,
+                recentTransactions: enrichedRecentTransactions
             }
         });
     } catch (error) {

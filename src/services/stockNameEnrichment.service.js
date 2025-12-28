@@ -256,7 +256,18 @@ class StockNameEnrichmentService {
             this.enrichStockName(stock, adapters)
         );
 
-        return await Promise.all(enrichmentPromises);
+        const enrichedStocks = await Promise.all(enrichmentPromises);
+
+        // Final pass to ensure no stock has null/undefined names
+        return enrichedStocks.map(stock => {
+            if (!stock.name || stock.name === stock.symbol || stock.name === "null" || stock.name === null || stock.name.trim() === "") {
+                return {
+                    ...stock,
+                    name: this.staticNames[stock.symbol] || stock.symbol
+                };
+            }
+            return stock;
+        });
     }
 
     /**
