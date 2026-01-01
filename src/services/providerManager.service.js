@@ -1,6 +1,7 @@
 const FinnhubAdapter = require("./adapters/finnhubAdapter");
 const AlphaVantageAdapter = require("./adapters/alphaVantageAdapter");
 const TwelveDataAdapter = require("./adapters/twelveDataAdapter");
+const MarketStackAdapter = require("./adapters/marketStackAdapter");
 const { getCache, setCache } = require("../config/redis");
 
 /**
@@ -53,6 +54,21 @@ class ProviderManagerService {
                 responseTimeCount: 0,
                 errorCount: 0,
                 successCount: 0
+            },
+            {
+                name: "marketstack",
+                adapter: new MarketStackAdapter(process.env.MARKETSTACK_API_KEY),
+                priority: 4,
+                status: "healthy",
+                healthScore: 1.0,
+                lastError: null,
+                consecutiveFailures: 0,
+                consecutiveSuccesses: 0,
+                responseTimeSum: 0,
+                responseTimeCount: 0,
+                errorCount: 0,
+                successCount: 0,
+                region: "nigeria" // Special flag for Nigerian stocks
             }
         ];
 
@@ -572,6 +588,91 @@ class ProviderManagerService {
         if (provider) {
             provider.status = "disabled";
             console.log(`🚫 Disabled provider ${providerName}`);
+        }
+    }
+
+    /**
+     * Get Nigerian stocks from MarketStack
+     * @param {Object} options - Request options
+     * @returns {Promise<Array>} Nigerian stocks
+     */
+    async getNigerianStocks(options = {}) {
+        try {
+            const marketStackProvider = this.providers.find(p => p.name === "marketstack");
+            
+            if (!marketStackProvider || marketStackProvider.status === "disabled") {
+                console.warn("⚠️ MarketStack provider not available for Nigerian stocks");
+                return [];
+            }
+
+            console.log("🇳🇬 Fetching Nigerian stocks from MarketStack...");
+            const requestStart = Date.now();
+            
+            const stocks = await marketStackProvider.adapter.getPopularStocks();
+            const responseTime = Date.now() - requestStart;
+            
+            if (stocks && stocks.length > 0) {
+                // Record success metrics
+                this._recordProviderMetrics("marketstack", responseTime, true);
+                
+                console.log(`✅ Got ${stocks.length} Nigerian stocks from MarketStack`);
+                return stocks.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    cached: false,
+                    staleness: "fresh",
+                    responseTime
+                }));
+            }
+            
+            return [];
+        } catch (error) {
+            console.error("❌ Failed to get Nigerian stocks:", error.message);
+            this._recordProviderMetrics("marketstack", 0, false);
+            return [];
+        }
+    }
+
+    /**
+     * Get Nigerian stocks by sector
+     * @param {String} sector - Sector name
+     * @returns {Promise<Array>} Nigerian sector stocks
+     */
+    async getNigerianStocksBySector(sector) {
+        try {
+            const marketStackProvider = this.providers.find(p => p.name === "marketstack");
+            
+            if (!marketStackProvider || marketStackProvider.status === "disabled") {
+                console.warn("⚠️ MarketStack provider not available for Nigerian sector stocks");
+                return [];
+            }
+
+            console.log(`🇳🇬 Fetching Nigerian ${sector} stocks from MarketStack...`);
+            const requestStart = Date.now();
+            
+            const stocks = await marketStackProvider.adapter.getStocksBySector(sector);
+            const responseTime = Date.now() - requestStart;
+            
+            if (stocks && stocks.length > 0) {
+                // Record success metrics
+                this._recordProviderMetrics("marketstack", responseTime, true);
+                
+                console.log(`✅ Got ${stocks.length} Nigerian ${sector} stocks from MarketStack`);
+                return stocks.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    sector: sector,
+                    cached: false,
+                    staleness: "fresh",
+                    responseTime
+                }));
+            }
+            
+            return [];
+        } catch (error) {
+            console.error(`❌ Failed to get Nigerian ${sector} stocks:`, error.message);
+            this._recordProviderMetrics("marketstack", 0, false);
+            return [];
         }
     }
 

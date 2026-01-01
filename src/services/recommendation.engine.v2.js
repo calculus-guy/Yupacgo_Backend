@@ -132,48 +132,72 @@ class RecommendationEngineV2 {
 
             const stocks = [];
 
-            // Strategy: Use Provider Manager to fetch different types of stocks
-            // This eliminates parallel fetching while maintaining diversity
+            // 1. Fetch Nigerian stocks first (for local relevance)
+            try {
+                console.log("🇳🇬 Fetching Nigerian stocks...");
+                const nigerianStocks = await providerManager.getNigerianStocks();
+                if (nigerianStocks && nigerianStocks.length > 0) {
+                    stocks.push(...nigerianStocks.slice(0, 15)); // Include up to 15 Nigerian stocks
+                    console.log(`✅ Added ${nigerianStocks.length} Nigerian stocks to candidates`);
+                }
+            } catch (error) {
+                console.warn("Failed to fetch Nigerian stocks:", error.message);
+            }
 
-            // 1. Fetch by preferred sectors (using primary available provider)
+            // 2. Fetch Nigerian stocks by preferred sectors
             if (profile.preferredSectors && profile.preferredSectors.length > 0) {
                 for (const sector of profile.preferredSectors.slice(0, 2)) {
                     try {
-                        console.log(`🔍 Fetching ${sector} sector stocks...`);
-                        const sectorStocks = await this.fetchStocksBySector(sector);
-                        if (sectorStocks && sectorStocks.length > 0) {
-                            stocks.push(...sectorStocks.slice(0, 10)); // Limit per sector
+                        console.log(`🇳🇬 Fetching Nigerian ${sector} sector stocks...`);
+                        const nigerianSectorStocks = await providerManager.getNigerianStocksBySector(sector);
+                        if (nigerianSectorStocks && nigerianSectorStocks.length > 0) {
+                            stocks.push(...nigerianSectorStocks.slice(0, 8)); // Limit per sector
                         }
                     } catch (error) {
-                        console.warn(`Failed to fetch ${sector} stocks:`, error.message);
+                        console.warn(`Failed to fetch Nigerian ${sector} stocks:`, error.message);
                     }
                 }
             }
 
-            // 2. Fetch popular stocks (using primary available provider)
+            // 3. Fetch US stocks by preferred sectors (using primary available provider)
+            if (profile.preferredSectors && profile.preferredSectors.length > 0) {
+                for (const sector of profile.preferredSectors.slice(0, 2)) {
+                    try {
+                        console.log(`🔍 Fetching US ${sector} sector stocks...`);
+                        const sectorStocks = await this.fetchStocksBySector(sector);
+                        if (sectorStocks && sectorStocks.length > 0) {
+                            stocks.push(...sectorStocks.slice(0, 8)); // Reduced to make room for Nigerian stocks
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to fetch US ${sector} stocks:`, error.message);
+                    }
+                }
+            }
+
+            // 4. Fetch popular US stocks (using primary available provider)
             try {
-                console.log("🔍 Fetching popular stocks...");
+                console.log("🔍 Fetching popular US stocks...");
                 const popularStocks = await this.fetchPopularStocks();
                 if (popularStocks && popularStocks.length > 0) {
-                    stocks.push(...popularStocks.slice(0, 15));
+                    stocks.push(...popularStocks.slice(0, 12)); // Reduced to make room for Nigerian stocks
                 }
             } catch (error) {
-                console.warn("Failed to fetch popular stocks:", error.message);
+                console.warn("Failed to fetch popular US stocks:", error.message);
             }
 
-            // 3. Fetch trending stocks (using primary available provider)
+            // 5. Fetch trending US stocks (using primary available provider)
             try {
-                console.log("🔍 Fetching trending stocks...");
+                console.log("🔍 Fetching trending US stocks...");
                 const trendingStocks = await this.fetchTrendingStocks();
                 if (trendingStocks && trendingStocks.length > 0) {
-                    stocks.push(...trendingStocks.slice(0, 10));
+                    stocks.push(...trendingStocks.slice(0, 8)); // Reduced to make room for Nigerian stocks
                 }
             } catch (error) {
-                console.warn("Failed to fetch trending stocks:", error.message);
+                console.warn("Failed to fetch trending US stocks:", error.message);
             }
 
-            // 4. Add some default high-quality stocks if we don't have enough
-            if (stocks.length < 10) {
+            // 6. Add some default high-quality stocks if we don't have enough
+            if (stocks.length < 15) {
                 const defaultStocks = await this.fetchDefaultStocks();
                 stocks.push(...defaultStocks);
             }
@@ -196,7 +220,7 @@ class RecommendationEngineV2 {
             // Cache the results
             await smartCache.set(cacheKey, uniqueStocks, 300); // 5 minutes cache
 
-            console.log(`✅ Fetched ${uniqueStocks.length} unique stocks using optimized approach`);
+            console.log(`✅ Fetched ${uniqueStocks.length} unique stocks (including Nigerian stocks) using optimized approach`);
             
             return uniqueStocks;
         } catch (error) {
@@ -438,6 +462,13 @@ class RecommendationEngineV2 {
         const reasons = [];
         const matchedTags = [];
 
+        // Nigerian stock bonus (5 points for local relevance)
+        if (stock.exchange === "NGX" || stock.metadata?.region === "nigeria") {
+            score += 5;
+            reasons.push("Nigerian stock (local market relevance)");
+            matchedTags.push("nigerian");
+        }
+
         // Sector match (20 points) - infer from symbol
         const stockSector = this.inferSector(stock.symbol);
         if (profile.preferredSectors.includes(stockSector)) {
@@ -492,6 +523,13 @@ class RecommendationEngineV2 {
             reasons.push("Well within your budget");
         }
 
+        // Currency consideration for Nigerian stocks
+        if (stock.currency === "NGN" && stock.exchange === "NGX") {
+            score += 3;
+            reasons.push("Local currency (no forex risk)");
+            matchedTags.push("local-currency");
+        }
+
         return {
             total: score,
             reasons,
@@ -504,12 +542,13 @@ class RecommendationEngineV2 {
      */
     inferSector(symbol) {
         const sectorMap = {
-            tech: ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CSCO", "INTC", "AMD", "CRM", "ADBE", "NFLX"],
-            finance: ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "BLK", "SCHW"],
+            tech: ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CSCO", "INTC", "AMD", "CRM", "ADBE", "NFLX", "MTNN", "AIRTELAFRI"],
+            finance: ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "BLK", "SCHW", "ZENITHBANK", "GTCO", "FBNH", "UBA", "ACCESSCORP", "STANBIC"],
             healthcare: ["JNJ", "UNH", "PFE", "ABBV", "TMO", "MRK", "ABT", "DHR", "LLY", "BMY"],
-            consumer: ["AMZN", "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "COST", "DG", "DIS"],
-            energy: ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL"],
-            diversified: ["SPY", "VOO", "QQQ", "VTI", "IVV", "DIA", "IWM"]
+            consumer: ["AMZN", "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "COST", "DG", "DIS", "NESTLE", "FLOURMILL", "DANGSUGAR", "NASCON", "CADBURY"],
+            energy: ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL", "SEPLAT", "OANDO", "TOTALENERGIES", "CONOIL"],
+            materials: ["DANGCEM", "BUACEMENT", "WAPCO", "LAFARGE"],
+            diversified: ["SPY", "VOO", "QQQ", "VTI", "IVV", "DIA", "IWM", "DANGOTE", "BUA", "TRANSCORP"]
         };
 
         for (const [sector, symbols] of Object.entries(sectorMap)) {
