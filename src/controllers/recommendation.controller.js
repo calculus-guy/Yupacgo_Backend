@@ -160,3 +160,34 @@ exports.markAsViewed = async (req, res) => {
         });
     }
 };
+
+/**
+ * Clear recommendation cache (for testing/debugging)
+ * DELETE /api/recommendations/cache
+ */
+exports.clearCache = async (req, res) => {
+    try {
+        const { profileType } = req.query;
+
+        const success = await recommendationEngine.clearRecommendationCache(profileType);
+
+        if (success) {
+            return res.json({
+                status: "success",
+                message: profileType 
+                    ? `Cache cleared for profile type: ${profileType}`
+                    : "All recommendation caches cleared"
+            });
+        } else {
+            return res.status(500).json({
+                status: "error",
+                message: "Failed to clear cache"
+            });
+        }
+    } catch (error) {
+        return res.status(500).json({
+            status: "error",
+            message: error.message
+        });
+    }
+};

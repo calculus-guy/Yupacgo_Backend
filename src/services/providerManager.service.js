@@ -77,8 +77,34 @@ class ProviderManagerService {
             quote: 300,        // 5 minutes for real-time quotes
             search: 1800,      // 30 minutes for search results
             profile: 86400,    // 24 hours for company profiles
-            monitoring: 600    // 10 minutes for monitoring data
+            monitoring: 600,   // 10 minutes for monitoring data
+            nigerianStocks: 1800,  // 30 minutes for Nigerian stocks (conserve API calls)
+            usStocks: 300,     // 5 minutes for US stocks
+            recommendations: 900  // 15 minutes for recommendation candidates
         };
+
+        // Request throttling for rate-limited providers
+        this.throttleConfig = {
+            marketstack: {
+                lastRequest: 0,
+                minInterval: 2000, // 2 seconds between requests
+                pausedUntil: 0     // Timestamp when provider is paused until
+            }
+        };
+
+        // Fallback Nigerian stocks (used when API fails)
+        this.fallbackNigerianStocks = [
+            { symbol: "DANGCEM", name: "Dangote Cement Plc", exchange: "NGX", currency: "NGN", sector: "materials" },
+            { symbol: "MTNN", name: "MTN Nigeria Communications Plc", exchange: "NGX", currency: "NGN", sector: "tech" },
+            { symbol: "ZENITHBANK", name: "Zenith Bank Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
+            { symbol: "GTCO", name: "Guaranty Trust Holding Company Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
+            { symbol: "BUACEMENT", name: "BUA Cement Plc", exchange: "NGX", currency: "NGN", sector: "materials" },
+            { symbol: "AIRTELAFRI", name: "Airtel Africa Plc", exchange: "NGX", currency: "NGN", sector: "tech" },
+            { symbol: "FBNH", name: "FBN Holdings Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
+            { symbol: "UBA", name: "United Bank for Africa Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
+            { symbol: "NESTLE", name: "Nestle Nigeria Plc", exchange: "NGX", currency: "NGN", sector: "consumer" },
+            { symbol: "SEPLAT", name: "Seplat Energy Plc", exchange: "NGX", currency: "NGN", sector: "energy" }
+        ];
     }
 
     /**
@@ -592,6 +618,45 @@ class ProviderManagerService {
     }
 
     /**
+     * Throttle requests to rate-limited providers
+     * @param {String} providerName - Provider to throttle
+     * @returns {Promise} Resolves when safe to make request
+     */
+    async throttleRequest(providerName) {
+        const config = this.throttleConfig[providerName];
+        if (!config) return;
+
+        // Check if provider is paused due to rate limiting
+        if (config.pausedUntil > Date.now()) {
+            const remainingPause = Math.ceil((config.pausedUntil - Date.now()) / 1000);
+            throw new Error(`Provider ${providerName} is paused for ${remainingPause} more seconds due to rate limiting`);
+        }
+
+        // Check if we need to wait due to throttling
+        const timeSinceLastRequest = Date.now() - config.lastRequest;
+        if (timeSinceLastRequest < config.minInterval) {
+            const waitTime = config.minInterval - timeSinceLastRequest;
+            console.log(`⏳ Throttling ${providerName} request, waiting ${waitTime}ms...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+
+        config.lastRequest = Date.now();
+    }
+
+    /**
+     * Pause a provider due to rate limiting
+     * @param {String} providerName - Provider to pause
+     * @param {Number} duration - Pause duration in milliseconds
+     */
+    pauseProvider(providerName, duration = 3600000) { // Default 1 hour
+        const config = this.throttleConfig[providerName];
+        if (config) {
+            config.pausedUntil = Date.now() + duration;
+            console.log(`🚫 Paused ${providerName} for ${duration/1000} seconds due to rate limiting`);
+        }
+    }
+
+    /**
      * Get Nigerian stocks from MarketStack
      * @param {Object} options - Request options
      * @returns {Promise<Array>} Nigerian stocks
@@ -631,6 +696,115 @@ class ProviderManagerService {
             this._recordProviderMetrics("marketstack", 0, false);
             return [];
         }
+    }
+
+    /**
+     * Get Nigerian stocks from MarketStack with fallback
+     * @param {Object} options - Request options
+     * @returns {Promise<Array>} Nigerian stocks
+     */
+    async getNigerianStocks(options = {}) {
+        const cacheKey = 'nigerian_stocks:popular';
+        
+        try {
+            // Check cache first
+            const cached = await getCache(cacheKey);
+            if (cached && !options.skipCache) {
+                console.log("✅ Cache hit for Nigerian stocks");
+                return cached.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    cached: true,
+                    staleness: this._calculateStaleness(stock.timestamp, this.cacheTTL.nigerianStocks)
+                }));
+            }
+
+            const marketStackProvider = this.providers.find(p => p.name === "marketstack");
+            
+            if (!marketStackProvider || marketStackProvider.status === "disabled") {
+                console.warn("⚠️ MarketStack provider not available, using fallback Nigerian stocks");
+                return this.getFallbackNigerianStocks();
+            }
+
+            // Throttle request to avoid rate limiting
+            await this.throttleRequest('marketstack');
+
+            console.log("🇳🇬 Fetching Nigerian stocks from MarketStack...");
+            const requestStart = Date.now();
+            
+            const stocks = await marketStackProvider.adapter.getPopularStocks();
+            const responseTime = Date.now() - requestStart;
+            
+            if (stocks && stocks.length > 0) {
+                // Record success metrics
+                this._recordProviderMetrics("marketstack", responseTime, true);
+                
+                // Cache the results
+                await setCache(cacheKey, stocks, this.cacheTTL.nigerianStocks);
+                
+                console.log(`✅ Got ${stocks.length} Nigerian stocks from MarketStack`);
+                return stocks.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    cached: false,
+                    staleness: "fresh",
+                    responseTime
+                }));
+            }
+            
+            // No stocks returned, use fallback
+            console.warn("⚠️ MarketStack returned no Nigerian stocks, using fallback");
+            return this.getFallbackNigerianStocks();
+            
+        } catch (error) {
+            console.error("❌ Failed to get Nigerian stocks:", error.message);
+            
+            // Handle rate limiting specifically
+            if (error.message.includes('429') || error.message.includes('rate limit')) {
+                this.pauseProvider('marketstack', 3600000); // Pause for 1 hour
+                console.log("🚫 MarketStack rate limited, paused for 1 hour");
+            }
+            
+            this._recordProviderMetrics("marketstack", 0, false);
+            
+            // Try to return cached data even if stale
+            const staleCache = await getCache(cacheKey);
+            if (staleCache) {
+                console.log("⚠️ Using stale cached Nigerian stocks due to API error");
+                return staleCache.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    cached: true,
+                    staleness: "stale",
+                    warning: "Data may be outdated due to API issues"
+                }));
+            }
+            
+            // Final fallback to static data
+            console.log("⚠️ Using fallback Nigerian stocks due to API failure");
+            return this.getFallbackNigerianStocks();
+        }
+    }
+
+    /**
+     * Get fallback Nigerian stocks (static data)
+     * @returns {Array} Fallback Nigerian stocks
+     */
+    getFallbackNigerianStocks() {
+        return this.fallbackNigerianStocks.map(stock => this._addMetadata({
+            ...stock,
+            price: 100, // Placeholder price
+            change: 0,
+            changePercent: 0,
+            volume: 1000000,
+            timestamp: new Date().toISOString()
+        }, {
+            provider: "fallback",
+            region: "nigeria",
+            cached: false,
+            staleness: "static",
+            warning: "Using static fallback data"
+        }));
     }
 
     /**
@@ -674,6 +848,119 @@ class ProviderManagerService {
             this._recordProviderMetrics("marketstack", 0, false);
             return [];
         }
+    }
+
+    /**
+     * Get Nigerian stocks by sector with fallback
+     * @param {String} sector - Sector name
+     * @returns {Promise<Array>} Nigerian sector stocks
+     */
+    async getNigerianStocksBySector(sector) {
+        const cacheKey = `nigerian_stocks:sector:${sector}`;
+        
+        try {
+            // Check cache first
+            const cached = await getCache(cacheKey);
+            if (cached) {
+                console.log(`✅ Cache hit for Nigerian ${sector} stocks`);
+                return cached.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    sector: sector,
+                    cached: true,
+                    staleness: this._calculateStaleness(stock.timestamp, this.cacheTTL.nigerianStocks)
+                }));
+            }
+
+            const marketStackProvider = this.providers.find(p => p.name === "marketstack");
+            
+            if (!marketStackProvider || marketStackProvider.status === "disabled") {
+                console.warn(`⚠️ MarketStack provider not available for ${sector}, using fallback`);
+                return this.getFallbackNigerianStocksBySector(sector);
+            }
+
+            // Throttle request
+            await this.throttleRequest('marketstack');
+
+            console.log(`🇳🇬 Fetching Nigerian ${sector} stocks from MarketStack...`);
+            const requestStart = Date.now();
+            
+            const stocks = await marketStackProvider.adapter.getStocksBySector(sector);
+            const responseTime = Date.now() - requestStart;
+            
+            if (stocks && stocks.length > 0) {
+                // Record success metrics
+                this._recordProviderMetrics("marketstack", responseTime, true);
+                
+                // Cache the results
+                await setCache(cacheKey, stocks, this.cacheTTL.nigerianStocks);
+                
+                console.log(`✅ Got ${stocks.length} Nigerian ${sector} stocks from MarketStack`);
+                return stocks.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    sector: sector,
+                    cached: false,
+                    staleness: "fresh",
+                    responseTime
+                }));
+            }
+            
+            // No stocks returned, use fallback
+            return this.getFallbackNigerianStocksBySector(sector);
+            
+        } catch (error) {
+            console.error(`❌ Failed to get Nigerian ${sector} stocks:`, error.message);
+            
+            // Handle rate limiting
+            if (error.message.includes('429') || error.message.includes('rate limit')) {
+                this.pauseProvider('marketstack', 3600000);
+            }
+            
+            this._recordProviderMetrics("marketstack", 0, false);
+            
+            // Try stale cache
+            const staleCache = await getCache(cacheKey);
+            if (staleCache) {
+                console.log(`⚠️ Using stale cached Nigerian ${sector} stocks`);
+                return staleCache.map(stock => this._addMetadata(stock, {
+                    provider: "marketstack",
+                    region: "nigeria",
+                    sector: sector,
+                    cached: true,
+                    staleness: "stale"
+                }));
+            }
+            
+            // Final fallback
+            return this.getFallbackNigerianStocksBySector(sector);
+        }
+    }
+
+    /**
+     * Get fallback Nigerian stocks by sector
+     * @param {String} sector - Sector name
+     * @returns {Array} Fallback sector stocks
+     */
+    getFallbackNigerianStocksBySector(sector) {
+        const sectorStocks = this.fallbackNigerianStocks.filter(stock => 
+            stock.sector.toLowerCase() === sector.toLowerCase()
+        );
+        
+        return sectorStocks.map(stock => this._addMetadata({
+            ...stock,
+            price: 100,
+            change: 0,
+            changePercent: 0,
+            volume: 1000000,
+            timestamp: new Date().toISOString()
+        }, {
+            provider: "fallback",
+            region: "nigeria",
+            sector: sector,
+            cached: false,
+            staleness: "static"
+        }));
     }
 
     /**

@@ -6,7 +6,8 @@ const {
     getRecommendations,
     getRecommendationHistory,
     getTrending,
-    markAsViewed
+    markAsViewed,
+    clearCache
 } = require("../controllers/recommendation.controller");
 
 // All recommendation routes require authentication
@@ -15,5 +16,6 @@ router.get("/", auth, getRecommendations);
 router.get("/history", auth, getRecommendationHistory);
 router.get("/trending", getTrending); // Public endpoint
 router.put("/:sessionId/view", auth, markAsViewed);
+router.delete("/cache", auth, clearCache); // Cache clearing for testing
 
 module.exports = router;
