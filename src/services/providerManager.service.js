@@ -92,18 +92,18 @@ class ProviderManagerService {
             }
         };
 
-        // Fallback Nigerian stocks (used when API fails)
+        // Fallback Nigerian stocks (used when API fails) - Using confirmed symbols
         this.fallbackNigerianStocks = [
             { symbol: "DANGCEM", name: "Dangote Cement Plc", exchange: "NGX", currency: "NGN", sector: "materials" },
+            { symbol: "DANGSUGAR", name: "Dangote Sugar Refinery Plc", exchange: "NGX", currency: "NGN", sector: "consumer" },
+            { symbol: "NAHCO", name: "Nigerian Aviation Handling Co Plc", exchange: "NGX", currency: "NGN", sector: "transport" },
+            { symbol: "ENAMELWA", name: "Nigerian Enamelware Co Plc", exchange: "NGX", currency: "NGN", sector: "consumer" },
             { symbol: "MTNN", name: "MTN Nigeria Communications Plc", exchange: "NGX", currency: "NGN", sector: "tech" },
             { symbol: "ZENITHBANK", name: "Zenith Bank Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
             { symbol: "GTCO", name: "Guaranty Trust Holding Company Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
-            { symbol: "BUACEMENT", name: "BUA Cement Plc", exchange: "NGX", currency: "NGN", sector: "materials" },
-            { symbol: "AIRTELAFRI", name: "Airtel Africa Plc", exchange: "NGX", currency: "NGN", sector: "tech" },
-            { symbol: "FBNH", name: "FBN Holdings Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
             { symbol: "UBA", name: "United Bank for Africa Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
-            { symbol: "NESTLE", name: "Nestle Nigeria Plc", exchange: "NGX", currency: "NGN", sector: "consumer" },
-            { symbol: "SEPLAT", name: "Seplat Energy Plc", exchange: "NGX", currency: "NGN", sector: "energy" }
+            { symbol: "FBNH", name: "FBN Holdings Plc", exchange: "NGX", currency: "NGN", sector: "finance" },
+            { symbol: "ACCESSCORP", name: "Access Holdings Plc", exchange: "NGX", currency: "NGN", sector: "finance" }
         ];
     }
 

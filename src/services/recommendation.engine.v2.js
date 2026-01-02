@@ -627,13 +627,14 @@ class RecommendationEngineV2 {
      */
     inferSector(symbol) {
         const sectorMap = {
-            tech: ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CSCO", "INTC", "AMD", "CRM", "ADBE", "NFLX", "MTNN", "AIRTELAFRI"],
-            finance: ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "BLK", "SCHW", "ZENITHBANK", "GTCO", "FBNH", "UBA", "ACCESSCORP", "STANBIC"],
+            tech: ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CSCO", "INTC", "AMD", "CRM", "ADBE", "NFLX", "MTNN"],
+            finance: ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "BLK", "SCHW", "ZENITHBANK", "GTCO", "FBNH", "UBA", "ACCESSCORP"],
             healthcare: ["JNJ", "UNH", "PFE", "ABBV", "TMO", "MRK", "ABT", "DHR", "LLY", "BMY"],
-            consumer: ["AMZN", "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "COST", "DG", "DIS", "NESTLE", "FLOURMILL", "DANGSUGAR", "NASCON", "CADBURY"],
-            energy: ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL", "SEPLAT", "OANDO", "TOTALENERGIES", "CONOIL"],
-            materials: ["DANGCEM", "BUACEMENT", "WAPCO", "LAFARGE"],
-            diversified: ["SPY", "VOO", "QQQ", "VTI", "IVV", "DIA", "IWM", "DANGOTE", "BUA", "TRANSCORP"]
+            consumer: ["AMZN", "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "COST", "DG", "DIS", "DANGSUGAR", "ENAMELWA"],
+            energy: ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL"],
+            materials: ["DANGCEM"],
+            transport: ["NAHCO"],
+            diversified: ["SPY", "VOO", "QQQ", "VTI", "IVV", "DIA", "IWM"]
         };
 
         for (const [sector, symbols] of Object.entries(sectorMap)) {

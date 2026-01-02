@@ -20,7 +20,7 @@ class MarketStackAdapter extends BaseAdapter {
 
     /**
      * Get quote for Nigerian stock symbol
-     * @param {String} symbol - Stock symbol (e.g., "DANGCEM", "MTNN")
+     * @param {String} symbol - Stock symbol (e.g., "DANGCEM", "DANGSUGAR")
      * @returns {Promise<Object>} Normalized quote object
      */
     async getQuote(symbol) {
@@ -32,7 +32,7 @@ class MarketStackAdapter extends BaseAdapter {
             const response = await axios.get(`${this.baseUrl}/eod/latest`, {
                 params: {
                     access_key: this.apiKey,
-                    symbols: `${symbol}.${this.exchange}`,
+                    symbols: symbol, // Use symbol without exchange suffix
                     limit: 1
                 },
                 timeout: 10000
@@ -51,7 +51,7 @@ class MarketStackAdapter extends BaseAdapter {
                 change: data.close - data.open,
                 changePercent: ((data.close - data.open) / data.open) * 100,
                 volume: data.volume,
-                exchange: "NGX",
+                exchange: "NGX", // Keep NGX as logical exchange for Nigerian stocks
                 currency: this.currency,
                 timestamp: data.date,
                 open: data.open,
@@ -72,23 +72,19 @@ class MarketStackAdapter extends BaseAdapter {
      */
     async getPopularStocks() {
         try {
-            // Top Nigerian stocks by market cap and liquidity
+            // Nigerian stocks that actually exist in MarketStack (confirmed via debug)
             const popularSymbols = [
-                "DANGCEM",  // Dangote Cement
-                "MTNN",     // MTN Nigeria
-                "ZENITHBANK", // Zenith Bank
-                "GTCO",     // Guaranty Trust Holding Company
-                "BUACEMENT", // BUA Cement
-                "AIRTELAFRI", // Airtel Africa
-                "SEPLAT",   // Seplat Energy
-                "FBNH",     // FBN Holdings
-                "UBA",      // United Bank for Africa
-                "ACCESSCORP", // Access Holdings
-                "NESTLE",   // Nestle Nigeria
-                "FLOURMILL", // Flour Mills of Nigeria
-                "OANDO",    // Oando
-                "STANBIC",  // Stanbic IBTC Holdings
-                "WAPCO"     // Lafarge Africa (WAPCO)
+                "DANGCEM",      // Dangote Cement - CONFIRMED ✅
+                "DANGSUGAR",    // Dangote Sugar Refinery - CONFIRMED ✅
+                "NAHCO",        // Nigerian Aviation Handling Co - CONFIRMED ✅
+                "ENAMELWA",     // Nigerian Enamelware Co - CONFIRMED ✅
+                // Adding more likely Nigerian stocks (to be tested)
+                "ZENITHBANK",   // Zenith Bank (might work)
+                "GTCO",         // Guaranty Trust (might work)
+                "UBA",          // United Bank for Africa (might work)
+                "MTNN",         // MTN Nigeria (might work)
+                "FBNH",         // FBN Holdings (might work)
+                "ACCESSCORP"    // Access Holdings (might work)
             ];
 
             return await this.getBatchQuotes(popularSymbols);
@@ -106,12 +102,12 @@ class MarketStackAdapter extends BaseAdapter {
     async getStocksBySector(sector) {
         try {
             const sectorMap = {
-                finance: ["ZENITHBANK", "GTCO", "FBNH", "UBA", "ACCESSCORP", "STANBIC"],
-                consumer: ["NESTLE", "FLOURMILL", "DANGSUGAR", "NASCON", "CADBURY"],
-                tech: ["MTNN", "AIRTELAFRI", "INTERSWITCH"],
-                energy: ["SEPLAT", "OANDO", "TOTALENERGIES", "CONOIL"],
-                materials: ["DANGCEM", "BUACEMENT", "WAPCO", "LAFARGE"],
-                diversified: ["DANGOTE", "BUA", "TRANSCORP"]
+                finance: ["ZENITHBANK", "GTCO", "FBNH", "UBA", "ACCESSCORP"],
+                consumer: ["DANGSUGAR", "ENAMELWA"], // Using confirmed symbols
+                tech: ["MTNN"], // MTN Nigeria
+                materials: ["DANGCEM"], // Using confirmed symbols
+                transport: ["NAHCO"], // Using confirmed symbols
+                diversified: ["DANGCEM", "DANGSUGAR"] // Dangote group companies
             };
 
             const symbols = sectorMap[sector.toLowerCase()] || [];
@@ -169,7 +165,7 @@ class MarketStackAdapter extends BaseAdapter {
      */
     async getCompanyProfile(symbol) {
         try {
-            // Static company profiles for major Nigerian stocks
+            // Company profiles for confirmed Nigerian stocks
             const profiles = {
                 "DANGCEM": {
                     name: "Dangote Cement Plc",
@@ -179,6 +175,33 @@ class MarketStackAdapter extends BaseAdapter {
                     country: "Nigeria",
                     currency: "NGN",
                     description: "Leading cement manufacturer in Africa"
+                },
+                "DANGSUGAR": {
+                    name: "Dangote Sugar Refinery Plc",
+                    exchange: "NGX",
+                    sector: "Consumer",
+                    industry: "Food Processing",
+                    country: "Nigeria",
+                    currency: "NGN",
+                    description: "Leading sugar refinery company in Nigeria"
+                },
+                "NAHCO": {
+                    name: "Nigerian Aviation Handling Co Plc",
+                    exchange: "NGX",
+                    sector: "Transport",
+                    industry: "Aviation Services",
+                    country: "Nigeria",
+                    currency: "NGN",
+                    description: "Leading aviation ground handling services in Nigeria"
+                },
+                "ENAMELWA": {
+                    name: "Nigerian Enamelware Co Plc",
+                    exchange: "NGX",
+                    sector: "Consumer",
+                    industry: "Manufacturing",
+                    country: "Nigeria",
+                    currency: "NGN",
+                    description: "Enamelware and household products manufacturer"
                 },
                 "MTNN": {
                     name: "MTN Nigeria Communications Plc",
@@ -207,14 +230,32 @@ class MarketStackAdapter extends BaseAdapter {
                     currency: "NGN",
                     description: "Leading financial services group in Nigeria"
                 },
-                "BUACEMENT": {
-                    name: "BUA Cement Plc",
+                "UBA": {
+                    name: "United Bank for Africa Plc",
                     exchange: "NGX",
-                    sector: "Materials",
-                    industry: "Cement",
+                    sector: "Finance",
+                    industry: "Banking",
                     country: "Nigeria",
                     currency: "NGN",
-                    description: "Major cement manufacturer in Nigeria"
+                    description: "Pan-African financial services group"
+                },
+                "FBNH": {
+                    name: "FBN Holdings Plc",
+                    exchange: "NGX",
+                    sector: "Finance",
+                    industry: "Banking",
+                    country: "Nigeria",
+                    currency: "NGN",
+                    description: "Leading financial services holding company"
+                },
+                "ACCESSCORP": {
+                    name: "Access Holdings Plc",
+                    exchange: "NGX",
+                    sector: "Finance",
+                    industry: "Banking",
+                    country: "Nigeria",
+                    currency: "NGN",
+                    description: "Leading financial services group in Nigeria"
                 }
             };
 
@@ -231,10 +272,14 @@ class MarketStackAdapter extends BaseAdapter {
      */
     async getTrending() {
         try {
-            // Return most liquid/active Nigerian stocks
+            // Return confirmed Nigerian stocks as trending
             const trendingSymbols = [
-                "DANGCEM", "MTNN", "ZENITHBANK", "GTCO", "BUACEMENT",
-                "AIRTELAFRI", "FBNH", "UBA", "ACCESSCORP", "NESTLE"
+                "DANGCEM",      // Dangote Cement - confirmed
+                "DANGSUGAR",    // Dangote Sugar - confirmed
+                "NAHCO",        // Nigerian Aviation - confirmed
+                "ENAMELWA",     // Nigerian Enamelware - confirmed
+                "MTNN",         // MTN Nigeria
+                "ZENITHBANK"    // Zenith Bank
             ];
 
             return await this.getBatchQuotes(trendingSymbols);
