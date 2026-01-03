@@ -41,7 +41,7 @@ async function debugMarketStack() {
         );
         
         africanExchanges.forEach(ex => {
-            console.log(`   📍 ${ex.name} (MIC: ${ex.mic}) - Country: ${ex.country || 'N/A'}`);
+            console.log(`    ${ex.name} (MIC: ${ex.mic}) - Country: ${ex.country || 'N/A'}`);
             console.log(`      Timezone: ${ex.timezone || 'N/A'}`);
             console.log(`      Currency: ${ex.currency || 'N/A'}`);
             console.log('');

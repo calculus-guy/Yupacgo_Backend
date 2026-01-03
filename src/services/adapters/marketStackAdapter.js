@@ -70,7 +70,7 @@ class MarketStackAdapter extends BaseAdapter {
      * Get popular Nigerian stocks
      * @returns {Promise<Array>} Array of popular Nigerian stocks
      */
-    async getPopularStocks() {
+    async getPopularStocks() { 
         try {
             // Nigerian stocks that actually exist in MarketStack (confirmed via debug)
             const popularSymbols = [
