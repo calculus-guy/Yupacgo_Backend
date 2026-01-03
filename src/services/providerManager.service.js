@@ -13,24 +13,25 @@ class ProviderManagerService {
     constructor() {
         // Provider priority order (primary to tertiary)
         this.providers = [
-            {
-                name: "finnhub",
-                adapter: new FinnhubAdapter(process.env.FINNHUB_API_KEY),
-                priority: 1,
-                status: "healthy",
-                healthScore: 1.0,
-                lastError: null,
-                consecutiveFailures: 0,
-                consecutiveSuccesses: 0,
-                responseTimeSum: 0,
-                responseTimeCount: 0,
-                errorCount: 0,
-                successCount: 0
-            },
+            // Temporarily disable Finnhub due to 401 errors
+            // {
+            //     name: "finnhub",
+            //     adapter: new FinnhubAdapter(process.env.FINNHUB_API_KEY),
+            //     priority: 1,
+            //     status: "disabled", // Temporarily disabled
+            //     healthScore: 0.0,
+            //     lastError: null,
+            //     consecutiveFailures: 0,
+            //     consecutiveSuccesses: 0,
+            //     responseTimeSum: 0,
+            //     responseTimeCount: 0,
+            //     errorCount: 0,
+            //     successCount: 0
+            // },
             {
                 name: "twelvedata",
                 adapter: new TwelveDataAdapter(process.env.TWELVEDATA_API_KEY),
-                priority: 2,
+                priority: 1, // Promoted to primary
                 status: "healthy",
                 healthScore: 1.0,
                 lastError: null,
@@ -44,7 +45,7 @@ class ProviderManagerService {
             {
                 name: "alphavantage",
                 adapter: new AlphaVantageAdapter(process.env.ALPHAVANTAGE_API_KEY),
-                priority: 3,
+                priority: 2, // Promoted to secondary
                 status: "healthy",
                 healthScore: 1.0,
                 lastError: null,
@@ -58,7 +59,7 @@ class ProviderManagerService {
             {
                 name: "marketstack",
                 adapter: new MarketStackAdapter(process.env.MARKETSTACK_API_KEY),
-                priority: 4,
+                priority: 3, // Keep as tertiary for Nigerian stocks
                 status: "healthy",
                 healthScore: 1.0,
                 lastError: null,
