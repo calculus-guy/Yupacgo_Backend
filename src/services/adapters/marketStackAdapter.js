@@ -93,7 +93,7 @@ class MarketStackAdapter extends BaseAdapter {
             return [];
         }
     }
-
+ 
     /**
      * Get Nigerian stocks by sector
      * @param {String} sector - Sector name
