@@ -114,43 +114,91 @@ class RecommendationEngineV2 {
     }
 
     /**
-     * Fetch candidate stocks with balanced Nigerian/US distribution
+     * Fetch candidate stocks using Provider Manager (optimized)
      * @param {Object} profile - User profile
      * @returns {Promise<Array>} Array of stocks
      */
     async fetchCandidateStocks(profile) {
         try {
-            // Check cache first (separate cache for recommendations)
-            const cacheKey = smartCache.generateKey('recommendations_balanced', profile.profileType);
+            // Check cache first
+            const cacheKey = smartCache.generateKey('recommendations', profile.profileType);
             const cached = await smartCache.get(cacheKey);
             if (cached && !cached.metadata.isStale) {
-                console.log("✅ Using cached balanced recommendation stocks");
+                console.log("✅ Using cached recommendation stocks");
                 return cached.data;
             }
 
-            console.log("🔄 Fetching balanced stocks (Nigerian + US) using optimized approach...");
+            console.log("🔄 Fetching stocks using Provider Manager (single provider approach)...");
 
             const stocks = [];
 
-            // PHASE 1: Fetch Nigerian stocks with fallback
-            const nigerianStocks = await this.fetchNigerianStocksWithFallback(profile);
-            stocks.push(...nigerianStocks);
-            console.log(`✅ Added ${nigerianStocks.length} Nigerian stocks to candidates`);
+            // Strategy: Use Provider Manager to fetch different types of stocks
+            // This eliminates parallel fetching while maintaining diversity
 
-            // PHASE 2: Fetch US stocks to complement Nigerian stocks
-            const usStocks = await this.fetchUSStocks(profile);
-            stocks.push(...usStocks);
-            console.log(`✅ Added ${usStocks.length} US stocks to candidates`);
+            // 1. Fetch by preferred sectors (using primary available provider)
+            if (profile.preferredSectors && profile.preferredSectors.length > 0) {
+                for (const sector of profile.preferredSectors.slice(0, 2)) {
+                    try {
+                        console.log(`🔍 Fetching ${sector} sector stocks...`);
+                        const sectorStocks = await this.fetchStocksBySector(sector);
+                        if (sectorStocks && sectorStocks.length > 0) {
+                            stocks.push(...sectorStocks.slice(0, 10)); // Limit per sector
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to fetch ${sector} stocks:`, error.message);
+                    }
+                }
+            }
 
-            // PHASE 3: Deduplicate and balance the final candidate pool
-            const balancedStocks = this.deduplicateAndBalance(stocks);
+            // 2. Fetch popular stocks (using primary available provider)
+            try {
+                console.log("🔍 Fetching popular stocks...");
+                const popularStocks = await this.fetchPopularStocks();
+                if (popularStocks && popularStocks.length > 0) {
+                    stocks.push(...popularStocks.slice(0, 15));
+                }
+            } catch (error) {
+                console.warn("Failed to fetch popular stocks:", error.message);
+            }
 
-            // Cache the results with shorter TTL for recommendations
-            await smartCache.set(cacheKey, balancedStocks, 900); // 15 minutes cache
+            // 3. Fetch trending stocks (using primary available provider)
+            try {
+                console.log("🔍 Fetching trending stocks...");
+                const trendingStocks = await this.fetchTrendingStocks();
+                if (trendingStocks && trendingStocks.length > 0) {
+                    stocks.push(...trendingStocks.slice(0, 10));
+                }
+            } catch (error) {
+                console.warn("Failed to fetch trending stocks:", error.message);
+            }
 
-            console.log(`✅ Fetched ${balancedStocks.length} balanced stocks (Nigerian + US)`);
+            // 4. Add some default high-quality stocks if we don't have enough
+            if (stocks.length < 10) {
+                const defaultStocks = await this.fetchDefaultStocks();
+                stocks.push(...defaultStocks);
+            }
+
+            // Deduplicate by symbol
+            const uniqueStocks = [];
+            const seen = new Set();
+
+            for (const stock of stocks) {
+                if (stock && stock.symbol && !seen.has(stock.symbol)) {
+                    seen.add(stock.symbol);
+                    uniqueStocks.push({
+                        ...stock,
+                        source: 'provider_manager',
+                        fetchedAt: new Date().toISOString()
+                    });
+                }
+            }
+
+            // Cache the results
+            await smartCache.set(cacheKey, uniqueStocks, 300); // 5 minutes cache
+
+            console.log(`✅ Fetched ${uniqueStocks.length} unique stocks using optimized approach`);
             
-            return balancedStocks;
+            return uniqueStocks;
         } catch (error) {
             console.error("Error fetching candidate stocks:", error.message);
             
@@ -161,165 +209,8 @@ class RecommendationEngineV2 {
                 return staleCache.data;
             }
             
-            // Final fallback to US stocks only
-            console.log("⚠️ Falling back to US stocks only");
-            return await this.fetchUSStocks(profile);
+            return [];
         }
-    }
-
-    /**
-     * Fetch Nigerian stocks with comprehensive fallback
-     * @param {Object} profile - User profile
-     * @returns {Promise<Array>} Nigerian stocks
-     */
-    async fetchNigerianStocksWithFallback(profile) {
-        const nigerianStocks = [];
-
-        try {
-            // 1. Fetch popular Nigerian stocks
-            console.log("🇳🇬 Fetching popular Nigerian stocks...");
-            const popularNigerian = await providerManager.getNigerianStocks();
-            if (popularNigerian && popularNigerian.length > 0) {
-                nigerianStocks.push(...popularNigerian.slice(0, 10));
-            }
-
-            // 2. Fetch Nigerian stocks by preferred sectors
-            if (profile.preferredSectors && profile.preferredSectors.length > 0) {
-                for (const sector of profile.preferredSectors.slice(0, 2)) {
-                    try {
-                        console.log(`🇳🇬 Fetching Nigerian ${sector} sector stocks...`);
-                        const sectorStocks = await providerManager.getNigerianStocksBySector(sector);
-                        if (sectorStocks && sectorStocks.length > 0) {
-                            nigerianStocks.push(...sectorStocks.slice(0, 5));
-                        }
-                    } catch (error) {
-                        console.warn(`Failed to fetch Nigerian ${sector} stocks:`, error.message);
-                    }
-                }
-            }
-
-            // Ensure we have at least some Nigerian stocks
-            if (nigerianStocks.length === 0) {
-                console.log("⚠️ No Nigerian stocks fetched, using fallback");
-                const fallbackStocks = providerManager.getFallbackNigerianStocks();
-                nigerianStocks.push(...fallbackStocks.slice(0, 8));
-            }
-
-        } catch (error) {
-            console.error("Error fetching Nigerian stocks:", error.message);
-            // Use fallback stocks
-            const fallbackStocks = providerManager.getFallbackNigerianStocks();
-            nigerianStocks.push(...fallbackStocks.slice(0, 8));
-        }
-
-        return nigerianStocks;
-    }
-
-    /**
-     * Fetch US stocks to complement Nigerian stocks
-     * @param {Object} profile - User profile
-     * @returns {Promise<Array>} US stocks
-     */
-    async fetchUSStocks(profile) {
-        const usStocks = [];
-
-        try {
-            // 1. Fetch US stocks by preferred sectors
-            if (profile.preferredSectors && profile.preferredSectors.length > 0) {
-                for (const sector of profile.preferredSectors.slice(0, 2)) {
-                    try {
-                        console.log(`🔍 Fetching US ${sector} sector stocks...`);
-                        const sectorStocks = await this.fetchStocksBySector(sector);
-                        if (sectorStocks && sectorStocks.length > 0) {
-                            usStocks.push(...sectorStocks.slice(0, 6));
-                        }
-                    } catch (error) {
-                        console.warn(`Failed to fetch US ${sector} stocks:`, error.message);
-                    }
-                }
-            }
-
-            // 2. Fetch popular US stocks
-            try {
-                console.log("🔍 Fetching popular US stocks...");
-                const popularStocks = await this.fetchPopularStocks();
-                if (popularStocks && popularStocks.length > 0) {
-                    usStocks.push(...popularStocks.slice(0, 10));
-                }
-            } catch (error) {
-                console.warn("Failed to fetch popular US stocks:", error.message);
-            }
-
-            // 3. Fetch trending US stocks
-            try {
-                console.log("🔍 Fetching trending US stocks...");
-                const trendingStocks = await this.fetchTrendingStocks();
-                if (trendingStocks && trendingStocks.length > 0) {
-                    usStocks.push(...trendingStocks.slice(0, 6));
-                }
-            } catch (error) {
-                console.warn("Failed to fetch trending US stocks:", error.message);
-            }
-
-            // 4. Add default high-quality stocks if needed
-            if (usStocks.length < 10) {
-                const defaultStocks = await this.fetchDefaultStocks();
-                usStocks.push(...defaultStocks);
-            }
-
-        } catch (error) {
-            console.error("Error fetching US stocks:", error.message);
-            // Fallback to default stocks
-            const defaultStocks = await this.fetchDefaultStocks();
-            usStocks.push(...defaultStocks);
-        }
-
-        return usStocks;
-    }
-
-    /**
-     * Deduplicate and balance stock distribution
-     * @param {Array} stocks - All candidate stocks
-     * @returns {Array} Balanced and deduplicated stocks
-     */
-    deduplicateAndBalance(stocks) {
-        // Deduplicate by symbol
-        const uniqueStocks = [];
-        const seen = new Set();
-        const nigerianStocks = [];
-        const usStocks = [];
-
-        for (const stock of stocks) {
-            if (stock && stock.symbol && !seen.has(stock.symbol)) {
-                seen.add(stock.symbol);
-                
-                const enrichedStock = {
-                    ...stock,
-                    source: 'balanced_fetch',
-                    fetchedAt: new Date().toISOString()
-                };
-
-                // Categorize by region
-                if (stock.exchange === "NGX" || stock.metadata?.region === "nigeria") {
-                    nigerianStocks.push(enrichedStock);
-                } else {
-                    usStocks.push(enrichedStock);
-                }
-            }
-        }
-
-        // Balance the distribution (aim for 40% Nigerian, 60% US)
-        const targetNigerianCount = Math.min(15, Math.ceil(nigerianStocks.length * 0.4));
-        const targetUSCount = Math.min(20, Math.ceil(usStocks.length * 0.6));
-
-        const balancedStocks = [
-            ...nigerianStocks.slice(0, targetNigerianCount),
-            ...usStocks.slice(0, targetUSCount)
-        ];
-
-        console.log(`📊 Balanced distribution: ${nigerianStocks.slice(0, targetNigerianCount).length} Nigerian + ${usStocks.slice(0, targetUSCount).length} US stocks`);
-
-        return balancedStocks;
     }
 
     /**
@@ -547,13 +438,6 @@ class RecommendationEngineV2 {
         const reasons = [];
         const matchedTags = [];
 
-        // Nigerian stock bonus (5 points for local relevance)
-        if (stock.exchange === "NGX" || stock.metadata?.region === "nigeria") {
-            score += 5;
-            reasons.push("Nigerian stock (local market relevance)");
-            matchedTags.push("nigerian");
-        }
-
         // Sector match (20 points) - infer from symbol
         const stockSector = this.inferSector(stock.symbol);
         if (profile.preferredSectors.includes(stockSector)) {
@@ -608,13 +492,6 @@ class RecommendationEngineV2 {
             reasons.push("Well within your budget");
         }
 
-        // Currency consideration for Nigerian stocks
-        if (stock.currency === "NGN" && stock.exchange === "NGX") {
-            score += 3;
-            reasons.push("Local currency (no forex risk)");
-            matchedTags.push("local-currency");
-        }
-
         return {
             total: score,
             reasons,
@@ -627,13 +504,11 @@ class RecommendationEngineV2 {
      */
     inferSector(symbol) {
         const sectorMap = {
-            tech: ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CSCO", "INTC", "AMD", "CRM", "ADBE", "NFLX", "MTNN"],
-            finance: ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "BLK", "SCHW", "ZENITHBANK", "GTCO", "FBNH", "UBA", "ACCESSCORP"],
+            tech: ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CSCO", "INTC", "AMD", "CRM", "ADBE", "NFLX"],
+            finance: ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "BLK", "SCHW"],
             healthcare: ["JNJ", "UNH", "PFE", "ABBV", "TMO", "MRK", "ABT", "DHR", "LLY", "BMY"],
-            consumer: ["AMZN", "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "COST", "DG", "DIS", "DANGSUGAR", "ENAMELWA"],
+            consumer: ["AMZN", "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "COST", "DG", "DIS"],
             energy: ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL"],
-            materials: ["DANGCEM"],
-            transport: ["NAHCO"],
             diversified: ["SPY", "VOO", "QQQ", "VTI", "IVV", "DIA", "IWM"]
         };
 
@@ -723,14 +598,14 @@ class RecommendationEngineV2 {
     async clearRecommendationCache(profileType = null) {
         try {
             if (profileType) {
-                const cacheKey = smartCache.generateKey('recommendations_balanced', profileType);
+                const cacheKey = smartCache.generateKey('recommendations', profileType);
                 await smartCache.delete(cacheKey);
                 console.log(`🗑️ Cleared recommendation cache for profile type: ${profileType}`);
             } else {
                 // Clear all recommendation caches
                 const profileTypes = ['Conservative', 'Balanced', 'Aggressive'];
                 for (const type of profileTypes) {
-                    const cacheKey = smartCache.generateKey('recommendations_balanced', type);
+                    const cacheKey = smartCache.generateKey('recommendations', type);
                     await smartCache.delete(cacheKey);
                 }
                 console.log("🗑️ Cleared all recommendation caches");
