@@ -6,4 +6,4 @@ dist
 coverage
 logs
 
-*.md
+RECOMMENDATION_ENGINE_EXPLAINED.md
