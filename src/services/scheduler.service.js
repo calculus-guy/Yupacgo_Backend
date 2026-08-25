@@ -7,12 +7,10 @@ const { monitorWatchlistPrices, cleanupOldNotifications } = require("./priceMoni
 exports.initializeScheduler = () => {
     console.log("⏰ Initializing optimized background jobs...");
 
-    // 24/7 Base monitoring - Every 10 minutes (reduced from 5 minutes)
-    // This covers crypto, international markets, after-hours trading, and pre-market
-    cron.schedule("*/10 * * * *", async () => {
-        console.log("⏰ Running 24/7 base monitoring...");
-        await monitorWatchlistPrices();
-    });
+    // Market hours, extended hours, and weekend monitoring together already cover
+    // every hour of every day with no gaps - a separate "24/7 base" job on top of
+    // them would just run in parallel with whichever tier is active and double
+    // the API calls, so it's intentionally not included here.
 
     // Market hours monitoring (9 AM - 4 PM EST, Mon-Fri) - Every 5 minutes (reduced from 2 minutes)
     // More responsive during active trading but respects rate limits
@@ -42,7 +40,6 @@ exports.initializeScheduler = () => {
     });
 
     console.log("✅ Optimized background jobs initialized:");
-    console.log("   - 24/7 Base monitoring: Every 10 minutes (reduced frequency)");
     console.log("   - Market hours (9AM-4PM EST, Mon-Fri): Every 5 minutes (reduced frequency)");
     console.log("   - Extended hours (4PM-9AM EST, Mon-Fri): Every 15 minutes (reduced frequency)");
     console.log("   - Weekend monitoring: Every 20 minutes (reduced frequency)");

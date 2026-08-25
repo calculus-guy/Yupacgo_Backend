@@ -10,7 +10,7 @@ const Watchlist = require("../models/watchlist.models");
 const VirtualPortfolio = require("../models/virtualPortfolio.models");
 const Notification = require("../models/notification.models");
 const RecommendationSession = require("../models/recommendationSession.models");
-const { redisClient } = require("../config/redis");
+const { getRedisClient } = require("../config/redis");
 
 /**
  * Get admin dashboard overview
@@ -54,7 +54,7 @@ exports.getDashboard = async (req, res) => {
         // System health checks
         const systemHealth = {
             database: "connected",
-            redis: redisClient?.isOpen ? "connected" : "disconnected",
+            redis: getRedisClient()?.status === "ready" ? "connected" : "disconnected",
             backgroundJobs: "running" // Assume running if no errors
         };
 
@@ -92,7 +92,7 @@ exports.getUsers = async (req, res) => {
         const [users, totalUsers] = await Promise.all([
             User.find({ role: "user" })
                 .select("-password")
-                .populate("onboarding", "riskTolerance investmentGoals")
+                .populate("onboarding", "goal risk duration budget experience approach")
                 .sort({ createdAt: -1 })
                 .limit(limit)
                 .skip(skip),
@@ -163,19 +163,24 @@ exports.getActivities = async (req, res) => {
  */
 exports.getSystemHealth = async (req, res) => {
     try {
+        const redisClient = getRedisClient();
         const health = {
             database: "connected", // If we reach here, DB is connected
-            redis: redisClient?.isOpen ? "connected" : "disconnected",
+            redis: redisClient?.status === "ready" ? "connected" : "disconnected",
             backgroundJobs: "running",
             timestamp: new Date().toISOString()
         };
 
         // Test Redis connection
-        try {
-            await redisClient.ping();
-            health.redis = "connected";
-        } catch (error) {
-            health.redis = "error";
+        if (redisClient) {
+            try {
+                await redisClient.ping();
+                health.redis = "connected";
+            } catch (error) {
+                health.redis = "error";
+            }
+        } else {
+            health.redis = "not_configured";
         }
 
         return res.json({
@@ -537,8 +542,8 @@ exports.getPortfolioAnalytics = async (req, res) => {
             {
                 $group: {
                     _id: null,
-                    totalCash: { $sum: "$cash" },
-                    avgCash: { $avg: "$cash" },
+                    totalCash: { $sum: "$availableCash" },
+                    avgCash: { $avg: "$availableCash" },
                     totalTransactions: { $sum: { $size: "$transactions" } }
                 }
             }
@@ -692,7 +697,7 @@ exports.getMonitoringStats = async (req, res) => {
                 $group: {
                     _id: {
                         hour: { $hour: "$createdAt" },
-                        symbol: "$metadata.symbol"
+                        symbol: "$data.symbol"
                     },
                     count: { $sum: 1 }
                 }
@@ -717,10 +722,9 @@ exports.getMonitoringStats = async (req, res) => {
                 recentAlertPerformance,
                 monitoringStatus: "24/7 Active",
                 schedules: {
-                    base: "Every 5 minutes (24/7)",
-                    marketHours: "Every 2 minutes (9AM-4PM EST, Mon-Fri)",
-                    extendedHours: "Every 10 minutes (4PM-9AM EST, Mon-Fri)",
-                    weekends: "Every 15 minutes (Sat-Sun)"
+                    marketHours: "Every 5 minutes (9AM-4PM EST, Mon-Fri)",
+                    extendedHours: "Every 15 minutes (4PM-9AM EST, Mon-Fri)",
+                    weekends: "Every 20 minutes (Sat-Sun)"
                 }
             }
         });

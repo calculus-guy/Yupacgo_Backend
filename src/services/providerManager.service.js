@@ -94,10 +94,10 @@ class ProviderManagerService {
             let fallbackUsed = false;
 
             for (const provider of availableProviders) {
+                const requestStart = Date.now();
                 try {
                     console.log(`🔄 Trying ${provider.name} for quote ${symbol}`);
-                    const requestStart = Date.now();
-                    
+
                     const quote = await Promise.race([
                         provider.adapter.getQuote(symbol),
                         new Promise((_, reject) => 
@@ -195,10 +195,10 @@ class ProviderManagerService {
             let lastError = null;
 
             for (const provider of availableProviders) {
+                const requestStart = Date.now();
                 try {
                     console.log(`🔍 Searching "${query}" with ${provider.name}`);
-                    const requestStart = Date.now();
-                    
+
                     const results = await Promise.race([
                         provider.adapter.searchSymbol(query),
                         new Promise((_, reject) => 
@@ -286,10 +286,10 @@ class ProviderManagerService {
             let lastError = null;
 
             for (const provider of availableProviders) {
+                const requestStart = Date.now();
                 try {
                     console.log(`🏢 Getting profile for ${symbol} from ${provider.name}`);
-                    const requestStart = Date.now();
-                    
+
                     const profile = await Promise.race([
                         provider.adapter.getCompanyProfile(symbol),
                         new Promise((_, reject) => 

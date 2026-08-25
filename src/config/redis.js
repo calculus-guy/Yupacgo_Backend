@@ -105,10 +105,17 @@ const deleteCachePattern = async (pattern) => {
     }
 };
 
+/**
+ * Get the current Redis client instance (or null if not configured/connected)
+ * Exposed as a function since redisClient is reassigned after connectRedis() runs
+ */
+const getRedisClient = () => redisClient;
+
 module.exports = {
     connectRedis,
     getCache,
     setCache,
     deleteCache,
-    deleteCachePattern
+    deleteCachePattern,
+    getRedisClient
 };

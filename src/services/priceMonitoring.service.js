@@ -80,9 +80,9 @@ exports.monitorWatchlistPrices = async () => {
                         const recentAlert = await Notification.findOne({
                             userId: watchlist.userId._id,
                             type: "price_alert",
-                            "metadata.symbol": watchlist.symbol,
-                            "metadata.targetPrice": targetPrice,
-                            "metadata.condition": condition,
+                            "data.symbol": watchlist.symbol,
+                            "data.targetPrice": targetPrice,
+                            "data.condition": condition,
                             createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) } // Within last hour
                         });
 

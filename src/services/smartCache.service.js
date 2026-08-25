@@ -1,4 +1,4 @@
-const { getCache, setCache } = require("../config/redis");
+const { getCache, setCache, deleteCache } = require("../config/redis");
 
 /**
  * Smart Cache Service
@@ -260,9 +260,8 @@ class SmartCacheService {
      */
     async delete(key) {
         try {
-            // Note: Redis client doesn't expose delete directly through our wrapper
-            // This would need to be implemented in the redis config if needed
-            console.log(`🗑️ Cache deletion requested for ${key}`);
+            await deleteCache(key);
+            console.log(`🗑️ Cache deleted for ${key}`);
             return true;
         } catch (error) {
             console.error(`❌ Error deleting cache for key ${key}:`, error.message);

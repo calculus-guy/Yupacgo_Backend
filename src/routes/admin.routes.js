@@ -56,7 +56,7 @@ router.get("/cache-stats", adminAuth, getCacheStats);
 router.get("/optimization-metrics", adminAuth, getOptimizationMetrics);
 
 // Email testing endpoint (temporary)
-router.post("/test-email", async (req, res) => {
+router.post("/test-email", adminAuth, async (req, res) => {
     try {
         const { sendOTP } = require("../services/email.service");
         const testOTP = Math.floor(100000 + Math.random() * 900000).toString();

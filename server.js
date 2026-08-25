@@ -26,8 +26,7 @@ const corsOptions = {
         'https://yupacgo.vercel.app',
         'http://localhost:5173',
         'https://www.yupacgo.com',
-        'https://yupacgo.com',
-        'yupacgo.com'
+        'https://yupacgo.com'
     ],
     credentials: true,
     optionsSuccessStatus: 200,

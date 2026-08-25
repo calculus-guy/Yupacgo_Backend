@@ -30,14 +30,10 @@ const NotificationSchema = new mongoose.Schema(
             required: true
         },
 
-        // Additional data specific to notification type
+        // Additional data specific to notification type (shape varies by type)
         data: {
-            symbol: String,
-            price: Number,
-            change: Number,
-            changePercent: Number,
-            sessionId: mongoose.Schema.Types.ObjectId,
-            // ... other relevant data
+            type: mongoose.Schema.Types.Mixed,
+            default: {}
         },
 
         read: {
