@@ -255,6 +255,14 @@ exports.deleteAccount = async (req, res) => {
 
         // Verify password
         const user = await User.findById(userId);
+
+        if (!user) {
+            return res.status(404).json({
+                status: "error",
+                message: "User not found"
+            });
+        }
+
         const validPassword = await bcrypt.compare(password, user.password);
 
         if (!validPassword) {
