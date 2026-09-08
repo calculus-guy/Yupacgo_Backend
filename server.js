@@ -52,6 +52,17 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 app.use(express.json({ limit: "1mb" }));
+// express.json() leaves req.body as `undefined` (not `{}`) for a request with
+// no body — e.g. axios.post(url) called with no second argument, as the
+// frontend's logout() does. Every controller destructures straight off
+// req.body, so that one common client pattern crashed with a 500 ("Cannot
+// destructure property of undefined") instead of just seeing empty fields.
+// This closes the whole class of bug in one place rather than defending each
+// controller individually.
+app.use((req, res, next) => {
+    if (req.body === undefined) req.body = {};
+    next();
+});
 
 const corsOptions = {
     origin(origin, callback) {

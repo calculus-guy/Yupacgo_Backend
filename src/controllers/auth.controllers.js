@@ -136,7 +136,7 @@ exports.adminLogin = asyncHandler(async (req, res) => {
  * short of a full re-login (or, as shipped, just lasted 7 days flat).
  */
 exports.refreshToken = asyncHandler(async (req, res) => {
-    const { refreshToken } = req.body;
+    const { refreshToken } = req.body || {};
     if (!refreshToken) throw AppError.badRequest("refreshToken is required");
 
     // We need to know which user this claims to belong to before we can look
@@ -164,7 +164,7 @@ exports.refreshToken = asyncHandler(async (req, res) => {
 });
 
 exports.logout = asyncHandler(async (req, res) => {
-    const { refreshToken } = req.body;
+    const { refreshToken } = req.body || {};
     if (refreshToken) await revokeRefreshToken(refreshToken);
 
     return res.json({ status: "success", message: "Logged out successfully" });
