@@ -18,10 +18,12 @@ const ActivityLogSchema = new mongoose.Schema(
             required: true,
             enum: [
                 "user_signup",
-                "user_login", 
+                "user_login",
                 "user_logout",
                 "profile_update",
                 "password_change",
+                "password_reset_requested",
+                "password_reset_completed",
                 "onboarding_complete",
                 "watchlist_add",
                 "watchlist_remove",
@@ -59,16 +61,16 @@ const ActivityLogSchema = new mongoose.Schema(
             index: true
         }
     },
-    { 
-        timestamps: true,
-        // Auto-delete logs older than 90 days
-        expireAfterSeconds: 90 * 24 * 60 * 60
-    }
+    { timestamps: true }
 );
 
 // Indexes for efficient queries
 ActivityLogSchema.index({ action: 1, timestamp: -1 });
-ActivityLogSchema.index({ timestamp: -1 });
 ActivityLogSchema.index({ userId: 1, timestamp: -1 });
+
+// Auto-delete logs older than 90 days. `expireAfterSeconds` only works as an
+// index option — setting it in the schema's top-level options (as this used
+// to) is silently ignored by Mongoose, so logs were never actually expiring.
+ActivityLogSchema.index({ timestamp: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 
 module.exports = mongoose.model("ActivityLog", ActivityLogSchema);
