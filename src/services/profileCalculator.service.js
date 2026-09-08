@@ -1,326 +1,364 @@
-/**
- * Profile Calculator Service
- * Converts onboarding answers into computed investor profile
- * with goal-based constraints, budget constraints, and diversification levels
- */
+const {
+    GOAL, RISK, DURATION, BUDGET, EXPERIENCE, APPROACH, INTEREST,
+    RISK_LEVEL, EXPERIENCE_LEVEL, INVESTMENT_HORIZON, SECTOR
+} = require("../constants/domain");
 
 /**
- * Calculate risk score from onboarding data
- * @param {Object} onboardingData - Raw onboarding answers
- * @returns {Object} { riskScore, riskLevel }
+ * Profile Calculator
+ *
+ * Turns raw onboarding answers into the computed investor profile that drives
+ * the recommendation engine.
+ *
+ * REWRITTEN because the original silently defaulted on every unrecognised
+ * value. Three separate vocabulary mismatches meant investment horizon always
+ * collapsed to one value, sector preferences were always empty, and two of the
+ * five goals fell through to "long term growth" — including "preserve capital",
+ * which is its opposite. Every user ended up with one of only three possible
+ * profiles.
+ *
+ * The fix is structural, not cosmetic: this module now reads its vocabulary
+ * from constants/domain.js, and `computeProfile` THROWS on an unknown value
+ * rather than quietly substituting a default. A loud failure during onboarding
+ * is far cheaper than silently giving someone the wrong investment strategy.
  */
-function calculateRiskScore(onboardingData) {
-    const { risk, experience, duration } = onboardingData;
 
-    // Base risk score from user's risk tolerance answer
-    const riskMap = {
-        low: 1,
-        medium: 2,
-        high: 3
-    };
-    let baseRisk = riskMap[risk] || 2;
+// ---------------------------------------------------------------------------
+// Budget bands
+// ---------------------------------------------------------------------------
 
-    // Experience modifier
-    const experienceModifier = {
-        beginner: -0.3,
-        intermediate: 0,
-        advanced: 0.3
-    };
-    const expMod = experienceModifier[experience] || 0;
+/**
+ * Representative monthly investable amount per band, in NAIRA.
+ * These mirror the bands shown in the onboarding UI:
+ *   low    = under N20,000/month
+ *   medium = N20,000 - N100,000/month
+ *   high   = N100,000+/month
+ */
+const MONTHLY_BUDGET_NGN = Object.freeze({
+    [BUDGET.LOW]: 20000,
+    [BUDGET.MEDIUM]: 60000,   // midpoint of the band
+    [BUDGET.HIGH]: 250000
+});
 
-    // Duration modifier (longer horizon = can take more risk, but user chose conservative duration)
-    const durationModifier = {
-        short: 0.5,      // < 1 year - short term, higher urgency
-        mid: 0,          // 1-3 years - medium term
-        long: -0.2,      // 3-7 years - long term, can be patient
-        very_long: -0.3  // 7+ years - very long term, most patient
-    };
-    const durMod = durationModifier[duration] || 0;
+/**
+ * Compute budget constraints, converting Naira to USD so they can be compared
+ * against real share prices.
+ *
+ * The financial reasoning that matters here: at ~N1,350/USD a "low" band user
+ * has roughly $15/month. They cannot buy a single share of most large caps
+ * (AAPL alone is >$300). Rather than filter those stocks out and leave them
+ * with nothing, we flag that they need fractional investing and push them
+ * toward broad ETFs — one ETF share gives them diversification that would
+ * otherwise cost thousands of dollars to assemble.
+ */
+function computeBudgetConstraints(budget, ngnPerUsd) {
+    const monthlyNgn = MONTHLY_BUDGET_NGN[budget];
+    const monthlyUsd = monthlyNgn / ngnPerUsd;
 
-    // Calculate total risk score
-    let totalRiskScore = baseRisk + expMod + durMod;
+    // How many distinct positions is it sensible to split this budget across?
+    // Splitting $15 across ten holdings is not diversification, it is noise.
+    let maxPositionsCount;
+    let preferFractional;
+    let minPositionUsd;
 
-    // Clamp between 1 and 3
-    totalRiskScore = Math.max(1, Math.min(3, totalRiskScore));
-
-    // Determine risk level
-    let riskLevel;
-    if (totalRiskScore <= 1.6) {
-        riskLevel = "Conservative";
-    } else if (totalRiskScore <= 2.3) {
-        riskLevel = "Balanced";
+    if (budget === BUDGET.LOW) {
+        maxPositionsCount = 3;
+        preferFractional = true;
+        minPositionUsd = Math.max(2, monthlyUsd * 0.2);
+    } else if (budget === BUDGET.MEDIUM) {
+        maxPositionsCount = 6;
+        preferFractional = true;
+        minPositionUsd = Math.max(5, monthlyUsd * 0.12);
     } else {
-        riskLevel = "Aggressive";
+        maxPositionsCount = 12;
+        preferFractional = false;
+        minPositionUsd = Math.max(20, monthlyUsd * 0.06);
     }
 
     return {
-        riskScore: parseFloat(totalRiskScore.toFixed(2)),
-        riskLevel
+        budgetLevel: budget,
+        monthlyBudgetNgn: monthlyNgn,
+        monthlyBudgetUsd: round2(monthlyUsd),
+        fxRateUsed: ngnPerUsd,
+
+        // No hard share-price ceiling when fractional investing is viable.
+        // Kept as an explicit null (not undefined) so consumers must handle it.
+        maxSharePriceUsd: preferFractional ? null : round2(monthlyUsd * 2),
+
+        preferFractional,
+        minPositionUsd: round2(minPositionUsd),
+        maxPositionsCount,
+
+        // Small budgets get diversification from ETFs, not from many positions.
+        stronglyPreferETFs: budget === BUDGET.LOW,
+        recommendETFs: budget !== BUDGET.HIGH
     };
 }
 
-/**
- * Compute goal-based investment constraints
- * Different goals require different investment strategies
- * @param {String} goal - User's financial goal
- * @param {String} duration - Investment duration
- * @returns {Object} Goal constraints
- */
-function computeGoalConstraints(goal, duration) {
-    const constraints = {
-        retirement: {
-            minDiversification: 8,
-            preferDividends: true,
-            avoidHighVolatility: true,
-            preferStableGrowth: true,
-            recommendETFs: true,
-            liquidityPriority: "low"
-        },
-        education: {
-            minDiversification: 5,
-            preferGrowth: true,
-            liquidityImportant: true,
-            avoidLongLockup: true,
-            recommendETFs: true,
-            liquidityPriority: "medium"
-        },
-        short_term: {
-            minDiversification: 3,
-            preferLiquidity: true,
-            avoidLongLockup: true,
-            avoidHighVolatility: true,
-            recommendETFs: false,
-            liquidityPriority: "high"
-        },
-        long_term: {
-            minDiversification: 6,
-            preferGrowth: true,
-            canHandleVolatility: true,
-            preferCompounding: true,
-            recommendETFs: true,
-            liquidityPriority: "low"
-        },
-        preserve: {
-            minDiversification: 10,
-            preferStable: true,
-            avoidVolatility: true,
-            preferDividends: true,
-            recommendETFs: true,
-            liquidityPriority: "medium"
-        }
-    };
+// ---------------------------------------------------------------------------
+// Risk
+// ---------------------------------------------------------------------------
 
-    return constraints[goal] || constraints.long_term;
+const RISK_BASE = Object.freeze({
+    [RISK.LOW]: 1,
+    [RISK.MEDIUM]: 2,
+    [RISK.HIGH]: 3
+});
+
+const EXPERIENCE_MODIFIER = Object.freeze({
+    [EXPERIENCE.BEGINNER]: -0.3,
+    [EXPERIENCE.INTERMEDIATE]: 0,
+    [EXPERIENCE.ADVANCED]: 0.3
+});
+
+/**
+ * Longer horizons tolerate more volatility, because there is time to recover
+ * from a drawdown. Short horizons must not.
+ */
+const DURATION_MODIFIER = Object.freeze({
+    [DURATION.SHORT]: -0.5,     // < 1yr: capital must be there when needed
+    [DURATION.MID]: -0.1,
+    [DURATION.LONG]: 0.2,
+    [DURATION.VERY_LONG]: 0.4
+});
+
+function calculateRiskScore({ risk, experience, duration }) {
+    const score = clamp(
+        RISK_BASE[risk] + EXPERIENCE_MODIFIER[experience] + DURATION_MODIFIER[duration],
+        1,
+        3
+    );
+
+    let riskLevel;
+    if (score <= 1.6) riskLevel = RISK_LEVEL.CONSERVATIVE;
+    else if (score <= 2.3) riskLevel = RISK_LEVEL.BALANCED;
+    else riskLevel = RISK_LEVEL.AGGRESSIVE;
+
+    return { riskScore: round2(score), riskLevel };
 }
 
-/**
- * Compute budget-based investment constraints
- * Budget affects position sizing, stock selection, and fractional share recommendations
- * @param {String} budget - User's monthly budget (low/medium/high)
- * @returns {Object} Budget constraints
- */
-function computeBudgetConstraints(budget) {
-    const constraints = {
-        low: {
-            maxStockPrice: 50000,        // ₦50k per share max (or $50 for US stocks)
-            preferFractional: true,
-            minPositionSize: 5000,       // ₦5k minimum
-            recommendETFs: true,
-            maxPositionsCount: 5,        // Limit to 5 positions
-            budgetLevel: "low"
-        },
-        medium: {
-            maxStockPrice: 200000,       // ₦200k per share max
-            preferFractional: false,
-            minPositionSize: 20000,      // ₦20k minimum
-            recommendETFs: true,
-            maxPositionsCount: 10,
-            budgetLevel: "medium"
-        },
-        high: {
-            maxStockPrice: null,         // No limit
-            preferFractional: false,
-            minPositionSize: 100000,     // ₦100k minimum
-            recommendETFs: false,        // Can buy individual stocks
-            maxPositionsCount: 20,
-            budgetLevel: "high"
-        }
-    };
-
-    return constraints[budget] || constraints.medium;
-}
+// ---------------------------------------------------------------------------
+// Goal
+// ---------------------------------------------------------------------------
 
 /**
- * Compute diversification level based on risk profile
- * @param {String} riskLevel - Conservative/Balanced/Aggressive
- * @param {String} experience - User's experience level
- * @returns {Object} Diversification settings
+ * Goal-driven constraints. Every key in domain.GOAL is represented — there is
+ * deliberately no `||` fallback, so adding a goal without adding constraints
+ * fails loudly in `computeProfile`.
  */
-function computeDiversificationLevel(riskLevel, experience) {
-    const levels = {
-        Conservative: {
-            level: "high",
-            minAssets: 8,
-            maxAssets: 15,
-            description: "Highly diversified across sectors and asset types"
-        },
-        Balanced: {
-            level: "medium",
-            minAssets: 5,
-            maxAssets: 10,
-            description: "Moderately diversified with focus on key sectors"
-        },
-        Aggressive: {
-            level: "low",
-            minAssets: 3,
-            maxAssets: 7,
-            description: "Concentrated positions in high-conviction picks"
-        }
-    };
+const GOAL_CONSTRAINTS = Object.freeze({
+    [GOAL.RETIREMENT]: {
+        minDiversification: 8,
+        preferDividends: true,
+        preferStableGrowth: true,
+        avoidHighVolatility: true,
+        canHandleVolatility: false,
+        liquidityPriority: "low",
+        recommendETFs: true
+    },
+    [GOAL.EDUCATION]: {
+        minDiversification: 5,
+        preferGrowth: true,
+        preferStableGrowth: true,
+        avoidHighVolatility: true,
+        liquidityImportant: true,
+        liquidityPriority: "medium",
+        recommendETFs: true
+    },
+    [GOAL.SHORT_TERM]: {
+        minDiversification: 3,
+        preferLiquidity: true,
+        avoidHighVolatility: true,
+        avoidLongLockup: true,
+        liquidityPriority: "high",
+        recommendETFs: false
+    },
+    [GOAL.WEALTH_BUILDING]: {
+        minDiversification: 6,
+        preferGrowth: true,
+        preferCompounding: true,
+        canHandleVolatility: true,
+        liquidityPriority: "low",
+        recommendETFs: true
+    },
+    // The one the old code got dangerously wrong: this used to fall through to
+    // long-term growth constraints, i.e. the opposite of preserving capital.
+    [GOAL.CAPITAL_PRESERVATION]: {
+        minDiversification: 10,
+        preferStable: true,
+        preferDividends: true,
+        avoidVolatility: true,
+        avoidHighVolatility: true,
+        canHandleVolatility: false,
+        liquidityPriority: "medium",
+        recommendETFs: true
+    }
+});
 
-    const baseLevel = levels[riskLevel] || levels.Balanced;
+// ---------------------------------------------------------------------------
+// Diversification & cadence
+// ---------------------------------------------------------------------------
 
-    // Beginners should have more diversification regardless of risk level
-    if (experience === "beginner") {
-        baseLevel.minAssets = Math.max(baseLevel.minAssets, 6);
+const DIVERSIFICATION = Object.freeze({
+    [RISK_LEVEL.CONSERVATIVE]: { level: "high", minAssets: 8, maxAssets: 15 },
+    [RISK_LEVEL.BALANCED]: { level: "medium", minAssets: 5, maxAssets: 10 },
+    [RISK_LEVEL.AGGRESSIVE]: { level: "low", minAssets: 3, maxAssets: 7 }
+});
+
+const DIVERSIFICATION_COPY = Object.freeze({
+    high: "Spread widely across sectors and asset types to smooth out volatility",
+    medium: "Balanced across a handful of sectors with room for conviction picks",
+    low: "Concentrated in a small number of high-conviction positions"
+});
+
+/**
+ * NOTE: returns a fresh object every call. The original mutated a shared module
+ * -level constant when adjusting for beginners, so one beginner permanently
+ * changed the minimum asset count for every subsequent user until restart.
+ */
+function computeDiversificationLevel(riskLevel, experience, budgetConstraints) {
+    const base = DIVERSIFICATION[riskLevel];
+
+    let minAssets = base.minAssets;
+    let maxAssets = base.maxAssets;
+
+    // Beginners get more diversification regardless of stated risk appetite.
+    if (experience === EXPERIENCE.BEGINNER) {
+        minAssets = Math.max(minAssets, 6);
     }
 
-    return baseLevel;
+    // A budget can't support more positions than it can meaningfully fund.
+    // When that bites, diversification has to come from ETFs instead.
+    const cap = budgetConstraints.maxPositionsCount;
+    const budgetLimited = minAssets > cap;
+
+    maxAssets = Math.min(maxAssets, cap);
+    minAssets = Math.min(minAssets, cap);
+
+    return {
+        level: base.level,
+        minAssets,
+        maxAssets,
+        budgetLimited,
+        description: budgetLimited
+            ? `${DIVERSIFICATION_COPY[base.level]} — at your budget this is best achieved through diversified funds rather than many individual holdings`
+            : DIVERSIFICATION_COPY[base.level]
+    };
 }
 
-/**
- * Compute rebalancing frequency based on approach
- * @param {String} approach - passive/active
- * @param {String} riskLevel - Conservative/Balanced/Aggressive
- * @returns {Object} Rebalancing settings
- */
-function computeRebalancingFrequency(approach, riskLevel) {
-    const frequencies = {
-        passive: {
-            Conservative: { frequency: "quarterly", days: 90 },
-            Balanced: { frequency: "monthly", days: 30 },
-            Aggressive: { frequency: "monthly", days: 30 }
-        },
-        active: {
-            Conservative: { frequency: "monthly", days: 30 },
-            Balanced: { frequency: "bi-weekly", days: 14 },
-            Aggressive: { frequency: "weekly", days: 7 }
-        }
-    };
+const REBALANCING = Object.freeze({
+    [APPROACH.PASSIVE]: {
+        [RISK_LEVEL.CONSERVATIVE]: { frequency: "quarterly", days: 90 },
+        [RISK_LEVEL.BALANCED]: { frequency: "quarterly", days: 90 },
+        [RISK_LEVEL.AGGRESSIVE]: { frequency: "monthly", days: 30 }
+    },
+    [APPROACH.ACTIVE]: {
+        [RISK_LEVEL.CONSERVATIVE]: { frequency: "monthly", days: 30 },
+        [RISK_LEVEL.BALANCED]: { frequency: "bi-weekly", days: 14 },
+        [RISK_LEVEL.AGGRESSIVE]: { frequency: "weekly", days: 7 }
+    }
+});
 
-    return frequencies[approach]?.[riskLevel] || { frequency: "monthly", days: 30 };
-}
+// ---------------------------------------------------------------------------
+// Mappings
+// ---------------------------------------------------------------------------
 
-/**
- * Map experience string to standardized level
- * @param {String} experience - Raw experience value
- * @returns {String} Standardized experience level
- */
-function mapExperienceLevel(experience) {
-    const mapping = {
-        beginner: "Beginner",
-        intermediate: "Intermediate",
-        advanced: "Advanced"
-    };
-    return mapping[experience] || "Beginner";
-}
+const EXPERIENCE_LABEL = Object.freeze({
+    [EXPERIENCE.BEGINNER]: EXPERIENCE_LEVEL.BEGINNER,
+    [EXPERIENCE.INTERMEDIATE]: EXPERIENCE_LEVEL.INTERMEDIATE,
+    [EXPERIENCE.ADVANCED]: EXPERIENCE_LEVEL.ADVANCED
+});
 
-/**
- * Map duration to investment horizon
- * @param {String} duration - Raw duration value
- * @returns {String} Standardized investment horizon
- */
-function mapInvestmentHorizon(duration) {
-    const mapping = {
-        short: "short_term",      // < 1 year
-        mid: "medium_term",       // 1-3 years
-        long: "long_term",        // 3-7 years
-        very_long: "very_long_term" // 7+ years
-    };
-    return mapping[duration] || "medium_term";
-}
+const HORIZON = Object.freeze({
+    [DURATION.SHORT]: INVESTMENT_HORIZON.SHORT_TERM,
+    [DURATION.MID]: INVESTMENT_HORIZON.MEDIUM_TERM,
+    [DURATION.LONG]: INVESTMENT_HORIZON.LONG_TERM,
+    [DURATION.VERY_LONG]: INVESTMENT_HORIZON.VERY_LONG_TERM
+});
+
+const HORIZON_LABEL = Object.freeze({
+    [INVESTMENT_HORIZON.SHORT_TERM]: "ShortTerm",
+    [INVESTMENT_HORIZON.MEDIUM_TERM]: "MediumTerm",
+    [INVESTMENT_HORIZON.LONG_TERM]: "LongTerm",
+    [INVESTMENT_HORIZON.VERY_LONG_TERM]: "VeryLongTerm"
+});
 
 /**
- * Map interest areas to preferred sectors
- * @param {Array} interest - Array of interest strings
- * @returns {Array} Preferred sectors
+ * Asset-class interests -> sector/asset tags used by the scoring engine.
+ *
+ * The original never ran: the frontend posted display labels like
+ * "Stocks (local & international)" straight through, and every lookup missed,
+ * so `preferredSectors` was `[]` for every user on the platform. Normalising
+ * here as well as at the API boundary makes that failure mode impossible.
  */
-function mapPreferredSectors(interest) {
-    if (!interest || !Array.isArray(interest)) return [];
+const INTEREST_SECTORS = Object.freeze({
+    [INTEREST.STOCKS]: [SECTOR.TECH, SECTOR.FINANCE, SECTOR.HEALTHCARE, SECTOR.CONSUMER, SECTOR.INDUSTRIALS],
+    [INTEREST.ETF]: [SECTOR.DIVERSIFIED],
+    [INTEREST.MUTUAL_FUNDS]: [SECTOR.DIVERSIFIED],
+    [INTEREST.CRYPTO]: [SECTOR.TECH],          // no crypto instruments in the universe yet
+    [INTEREST.BONDS]: [SECTOR.FIXED_INCOME]
+});
 
-    const sectorMapping = {
-        stocks: ["tech", "finance", "healthcare", "consumer"],
-        etf: ["diversified", "index"],
-        mutualfunds: ["diversified", "managed"],
-        crypto: ["crypto", "blockchain"],
-        bonds: ["fixed_income", "government"]
-    };
+function mapPreferredSectors(interests) {
+    if (!Array.isArray(interests)) return [];
 
     const sectors = new Set();
-    interest.forEach(item => {
-        const mapped = sectorMapping[item];
-        if (mapped) {
-            mapped.forEach(sector => sectors.add(sector));
-        }
-    });
-
+    for (const item of interests) {
+        for (const sector of INTEREST_SECTORS[item] || []) sectors.add(sector);
+    }
     return Array.from(sectors);
 }
 
-/**
- * Generate profile type string
- * @param {String} riskLevel - Conservative/Balanced/Aggressive
- * @param {String} investmentHorizon - short_term/medium_term/long_term/very_long_term
- * @returns {String} Profile type
- */
-function generateProfileType(riskLevel, investmentHorizon) {
-    // Convert horizon to readable format
-    const horizonMap = {
-        short_term: "ShortTerm",
-        medium_term: "MediumTerm",
-        long_term: "LongTerm",
-        very_long_term: "VeryLongTerm"
-    };
-    
-    const horizonLabel = horizonMap[investmentHorizon] || "MediumTerm";
-    return `${riskLevel}-${horizonLabel}`;
-}
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
 
 /**
- * Main function: Compute full investor profile from onboarding data
- * Enhanced with goal constraints, budget constraints, and diversification
- * @param {Object} onboardingData - Raw onboarding answers
- * @returns {Object} Computed profile object
+ * Compute the full investor profile.
+ *
+ * @param {Object} onboarding - already-validated onboarding answers
+ * @param {Object} opts
+ * @param {number} opts.ngnPerUsd - live FX rate; caller fetches it (keeps this
+ *                                  function synchronous and unit-testable)
+ * @throws {Error} if any answer is outside the domain vocabulary
  */
-function computeProfile(onboardingData) {
-    // Calculate risk metrics
-    const { riskScore, riskLevel } = calculateRiskScore(onboardingData);
+function computeProfile(onboarding, { ngnPerUsd } = {}) {
+    if (!ngnPerUsd || ngnPerUsd <= 0) {
+        throw new Error("computeProfile requires a positive ngnPerUsd rate");
+    }
 
-    // Map other fields
-    const experienceLevel = mapExperienceLevel(onboardingData.experience);
-    const investmentHorizon = mapInvestmentHorizon(onboardingData.duration);
-    const preferredSectors = mapPreferredSectors(onboardingData.interest);
-    const profileType = generateProfileType(riskLevel, investmentHorizon);
+    const { goal, risk, duration, budget, experience, approach, interest } = onboarding;
 
-    // Compute advanced constraints
-    const goalConstraints = computeGoalConstraints(onboardingData.goal, onboardingData.duration);
-    const budgetConstraints = computeBudgetConstraints(onboardingData.budget);
-    const diversificationLevel = computeDiversificationLevel(riskLevel, onboardingData.experience);
-    const rebalancingFrequency = computeRebalancingFrequency(onboardingData.approach, riskLevel);
+    // Fail loudly rather than silently substituting a default. This is the
+    // single most important behavioural change in this file.
+    assertKnown("goal", goal, GOAL_CONSTRAINTS);
+    assertKnown("risk", risk, RISK_BASE);
+    assertKnown("duration", duration, DURATION_MODIFIER);
+    assertKnown("budget", budget, MONTHLY_BUDGET_NGN);
+    assertKnown("experience", experience, EXPERIENCE_MODIFIER);
+    assertKnown("approach", approach, REBALANCING);
+
+    const { riskScore, riskLevel } = calculateRiskScore({ risk, experience, duration });
+
+    const budgetConstraints = computeBudgetConstraints(budget, ngnPerUsd);
+    const goalConstraints = { ...GOAL_CONSTRAINTS[goal] };
+    const diversificationLevel = computeDiversificationLevel(riskLevel, experience, budgetConstraints);
+    const rebalancingFrequency = REBALANCING[approach][riskLevel];
+
+    const experienceLevel = EXPERIENCE_LABEL[experience];
+    const investmentHorizon = HORIZON[duration];
+    const preferredSectors = mapPreferredSectors(interest);
 
     return {
-        // Core profile data
         riskScore,
         riskLevel,
         experienceLevel,
         investmentHorizon,
-        goal: onboardingData.goal,
+        goal,
         preferredSectors,
-        monthlyBudget: onboardingData.budget,
-        approach: onboardingData.approach,
-        profileType,
+        monthlyBudget: budget,
+        approach,
+        profileType: `${riskLevel}-${HORIZON_LABEL[investmentHorizon]}`,
 
-        // Advanced constraints for recommendation engine
         goalConstraints,
         budgetConstraints,
         diversificationLevel,
@@ -328,15 +366,24 @@ function computeProfile(onboardingData) {
     };
 }
 
+function assertKnown(field, value, table) {
+    if (!Object.prototype.hasOwnProperty.call(table, value)) {
+        throw new Error(
+            `Unsupported onboarding value for '${field}': ${JSON.stringify(value)}. ` +
+            `Expected one of: ${Object.keys(table).join(", ")}`
+        );
+    }
+}
+
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const round2 = (n) => Math.round(n * 100) / 100;
+
 module.exports = {
     computeProfile,
     calculateRiskScore,
-    computeGoalConstraints,
     computeBudgetConstraints,
     computeDiversificationLevel,
-    computeRebalancingFrequency,
-    mapExperienceLevel,
-    mapInvestmentHorizon,
     mapPreferredSectors,
-    generateProfileType
+    MONTHLY_BUDGET_NGN,
+    GOAL_CONSTRAINTS
 };

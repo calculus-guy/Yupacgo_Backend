@@ -1,61 +1,26 @@
 const UserProfile = require("../models/userProfile.models");
+const { asyncHandler } = require("../middleware/errorHandler");
+const AppError = require("../utils/AppError");
 
 /**
  * Get user's computed profile
  * GET /api/profile
  */
-exports.getProfile = async (req, res) => {
-    try {
-        const userId = req.user.userId;
+exports.getProfile = asyncHandler(async (req, res) => {
+    const profile = await UserProfile.findOne({ userId: req.user.userId });
+    if (!profile) throw AppError.notFound("Profile not found. Please complete onboarding first.");
 
-        const profile = await UserProfile.findOne({ userId });
-
-        if (!profile) {
-            return res.status(404).json({
-                status: "error",
-                message: "Profile not found. Please complete onboarding first."
-            });
-        }
-
-        return res.json({
-            status: "success",
-            data: profile
-        });
-    } catch (error) {
-        return res.status(500).json({
-            status: "error",
-            message: error.message
-        });
-    }
-};
+    return res.json({ status: "success", data: profile });
+});
 
 /**
  * Get profile summary (lightweight version)
  * GET /api/profile/summary
  */
-exports.getProfileSummary = async (req, res) => {
-    try {
-        const userId = req.user.userId;
+exports.getProfileSummary = asyncHandler(async (req, res) => {
+    const profile = await UserProfile.findOne({ userId: req.user.userId })
+        .select("riskLevel profileType experienceLevel investmentHorizon");
+    if (!profile) throw AppError.notFound("Profile not found");
 
-        const profile = await UserProfile.findOne({ userId }).select(
-            "riskLevel profileType experienceLevel investmentHorizon"
-        );
-
-        if (!profile) {
-            return res.status(404).json({
-                status: "error",
-                message: "Profile not found"
-            });
-        }
-
-        return res.json({
-            status: "success",
-            data: profile
-        });
-    } catch (error) {
-        return res.status(500).json({
-            status: "error",
-            message: error.message
-        });
-    }
-};
+    return res.json({ status: "success", data: profile });
+});

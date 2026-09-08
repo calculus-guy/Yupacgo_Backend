@@ -32,19 +32,27 @@ const RecommendationSessionSchema = new mongoose.Schema(
                 canonicalId: String,
                 symbol: String,
                 name: String,
-                
+                exchange: String,
+                assetType: String,   // 'stock' | 'etf'
+                sector: String,
+
                 // Why this stock was recommended
                 matchScore: Number,
                 matchReasons: [String],
-                
+
                 // Price at time of recommendation
-                recommendedPrice: Number,
+                recommendedPrice: Number,        // USD
+                recommendedPriceNgn: Number,      // display-only NGN equivalent
                 currency: String,
-                
+                priceChange: Number,
+                priceChangePercent: Number,
+                provider: String,
+
                 // Position sizing suggestion
-                suggestedAllocation: Number, // percentage
-                suggestedPositionSize: Number, // amount in currency
-                
+                suggestedAllocation: Number,       // percentage
+                suggestedPositionSize: Number,      // USD
+                suggestedPositionSizeNgn: Number,   // display-only NGN equivalent
+
                 // Tags that matched
                 matchedTags: [String]
             }

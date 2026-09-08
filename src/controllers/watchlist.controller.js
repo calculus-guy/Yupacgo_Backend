@@ -1,320 +1,196 @@
 const Watchlist = require("../models/watchlist.models");
 const priceAggregator = require("../services/priceAggregator.service");
 const { logActivity } = require("../services/activityLogger.service");
+const { asyncHandler } = require("../middleware/errorHandler");
+const AppError = require("../utils/AppError");
 
 /**
  * Add stock to watchlist
  * POST /api/watchlist
  */
-exports.addToWatchlist = async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        const { symbol, name, exchange, notes, priceAlert } = req.body;
+exports.addToWatchlist = asyncHandler(async (req, res) => {
+    const userId = req.user.userId;
+    const { symbol, name, exchange, notes, priceAlert } = req.body;
 
-        if (!symbol || !name) {
-            return res.status(400).json({
-                status: "error",
-                message: "Symbol and name are required"
-            });
-        }
+    if (!symbol || !name) throw AppError.badRequest("Symbol and name are required");
 
-        // Check if already in watchlist
-        const existing = await Watchlist.findOne({ userId, symbol });
-        if (existing) {
-            return res.status(400).json({
-                status: "error",
-                message: "Stock already in watchlist"
-            });
-        }
+    const existing = await Watchlist.findOne({ userId, symbol });
+    if (existing) throw AppError.conflict("Stock already in watchlist");
 
-        const watchlistItem = await Watchlist.create({
-            userId,
-            symbol,
-            name,
-            exchange,
-            notes,
-            priceAlert
-        });
+    const watchlistItem = await Watchlist.create({ userId, symbol, name, exchange, notes, priceAlert });
 
-        // Log activity
-        logActivity({
-            userId,
-            action: "watchlist_add",
-            details: { symbol, name, hasAlert: !!priceAlert?.enabled },
-            userInfo: { email: req.user.email, firstname: req.user.firstname, lastname: req.user.lastname },
-            ipAddress: req.ip || req.connection.remoteAddress,
-            userAgent: req.get("User-Agent")
-        }).catch(err => console.error("Activity logging failed:", err.message));
+    logActivity({
+        userId,
+        action: "watchlist_add",
+        details: { symbol, name, hasAlert: !!priceAlert?.enabled },
+        userInfo: { email: req.user.email, firstname: req.user.firstname, lastname: req.user.lastname },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent")
+    }).catch(() => {});
 
-        return res.status(201).json({
-            status: "success",
-            message: "Added to watchlist",
-            data: watchlistItem
-        });
-    } catch (error) {
-        return res.status(500).json({
-            status: "error",
-            message: error.message
-        });
-    }
-};
+    return res.status(201).json({ status: "success", message: "Added to watchlist", data: watchlistItem });
+});
 
 /**
  * Get user's watchlist with comprehensive stock data
  * GET /api/watchlist
  */
-exports.getWatchlist = async (req, res) => {
-    try {
-        const userId = req.user.userId;
+exports.getWatchlist = asyncHandler(async (req, res) => {
+    const userId = req.user.userId;
+    const watchlist = await Watchlist.find({ userId }).sort({ addedAt: -1 });
 
-        const watchlist = await Watchlist.find({ userId }).sort({ addedAt: -1 });
+    const enrichedWatchlist = await Promise.all(
+        watchlist.map(async (item) => {
+            try {
+                const quote = await priceAggregator.getAggregatedQuote(item.symbol);
+                return {
+                    _id: item._id,
+                    userId: item.userId,
+                    addedAt: item.addedAt,
+                    notes: item.notes,
+                    priceAlert: item.priceAlert,
+                    symbol: quote.symbol,
+                    name: quote.name,
+                    exchange: quote.exchange,
+                    price: quote.price,
+                    change: quote.change,
+                    changePercent: quote.changePercent,
+                    priceType: quote.priceType,
+                    provider: quote.provider,
+                    confidence: quote.confidence,
+                    timestamp: quote.timestamp,
+                    alertStatus: alertStatusFor(item, quote.price)
+                };
+            } catch {
+                return {
+                    _id: item._id,
+                    userId: item.userId,
+                    symbol: item.symbol,
+                    name: item.name,
+                    exchange: item.exchange,
+                    addedAt: item.addedAt,
+                    notes: item.notes,
+                    priceAlert: item.priceAlert,
+                    price: null, change: null, changePercent: null, priceType: null,
+                    provider: null, confidence: "low", timestamp: null, alertStatus: "error"
+                };
+            }
+        })
+    );
 
-        // Fetch comprehensive stock data for all symbols
-        const enrichedWatchlist = await Promise.all(
-            watchlist.map(async (item) => {
-                try {
-                    // Get comprehensive quote data
-                    const quote = await priceAggregator.getAggregatedQuote(item.symbol);
-                    
-                    return {
-                        // Watchlist specific data
-                        _id: item._id,
-                        userId: item.userId,
-                        addedAt: item.addedAt,
-                        notes: item.notes,
-                        priceAlert: item.priceAlert,
-                        
-                        // Comprehensive stock data
-                        symbol: quote.symbol,
-                        name: quote.name,
-                        exchange: quote.exchange,
-                        price: quote.price,
-                        change: quote.change,
-                        changePercent: quote.changePercent,
-                        priceType: quote.priceType,
-                        provider: quote.provider,
-                        confidence: quote.confidence,
-                        timestamp: quote.timestamp,
-                        
-                        // Additional calculated fields
-                        alertStatus: item.priceAlert?.enabled ? 
-                            (item.priceAlert.condition === "above" && quote.price >= item.priceAlert.targetPrice) ||
-                            (item.priceAlert.condition === "below" && quote.price <= item.priceAlert.targetPrice) 
-                            ? "triggered" : "active" 
-                            : "none"
-                    };
-                } catch (error) {
-                    console.error(`Error fetching data for ${item.symbol}:`, error.message);
-                    // Return basic watchlist data if stock data fetch fails
-                    return {
-                        _id: item._id,
-                        userId: item.userId,
-                        symbol: item.symbol,
-                        name: item.name,
-                        exchange: item.exchange,
-                        addedAt: item.addedAt,
-                        notes: item.notes,
-                        priceAlert: item.priceAlert,
-                        price: null,
-                        change: null,
-                        changePercent: null,
-                        priceType: null,
-                        provider: null,
-                        confidence: "low",
-                        timestamp: null,
-                        alertStatus: "error"
-                    };
-                }
-            })
-        );
-
-        return res.json({
-            status: "success",
-            data: enrichedWatchlist
-        });
-    } catch (error) {
-        return res.status(500).json({
-            status: "error",
-            message: error.message
-        });
-    }
-};
+    return res.json({ status: "success", data: enrichedWatchlist });
+});
 
 /**
  * Get watchlist with comprehensive price comparison data
  * GET /api/watchlist/with-prices
  */
-exports.getWatchlistWithPrices = async (req, res) => {
-    try {
-        const userId = req.user.userId;
+exports.getWatchlistWithPrices = asyncHandler(async (req, res) => {
+    const userId = req.user.userId;
+    const watchlist = await Watchlist.find({ userId }).sort({ addedAt: -1 });
 
-        const watchlist = await Watchlist.find({ userId }).sort({ addedAt: -1 });
+    const enrichedWatchlist = await Promise.all(
+        watchlist.map(async (item) => {
+            try {
+                const pc = await priceAggregator.getPriceComparison(item.symbol);
+                return {
+                    _id: item._id,
+                    userId: item.userId,
+                    addedAt: item.addedAt,
+                    notes: item.notes,
+                    priceAlert: item.priceAlert,
+                    symbol: pc.symbol,
+                    name: pc.name,
+                    exchange: pc.exchange,
+                    price: pc.best.price,
+                    change: pc.best.change,
+                    changePercent: pc.best.changePercent,
+                    priceType: pc.best.priceType,
+                    provider: pc.best.provider,
+                    timestamp: pc.best.timestamp,
+                    prices: pc.prices,
+                    priceVariance: pc.priceVariance,
+                    confidence: pc.confidence,
+                    alertStatus: alertStatusFor(item, pc.best.price),
+                    alertAnalysis: alertAnalysisFor(item, pc.best.price)
+                };
+            } catch {
+                return {
+                    _id: item._id,
+                    userId: item.userId,
+                    symbol: item.symbol,
+                    name: item.name,
+                    exchange: item.exchange,
+                    addedAt: item.addedAt,
+                    notes: item.notes,
+                    priceAlert: item.priceAlert,
+                    price: null, change: null, changePercent: null, priceType: null,
+                    provider: null, prices: [], priceVariance: 0, confidence: "low",
+                    timestamp: null, alertStatus: "error", alertAnalysis: null
+                };
+            }
+        })
+    );
 
-        // Fetch comprehensive price comparison data for all symbols
-        const enrichedWatchlist = await Promise.all(
-            watchlist.map(async (item) => {
-                try {
-                    // Get comprehensive price comparison data
-                    const priceComparison = await priceAggregator.getPriceComparison(item.symbol);
-                    
-                    return {
-                        // Watchlist specific data
-                        _id: item._id,
-                        userId: item.userId,
-                        addedAt: item.addedAt,
-                        notes: item.notes,
-                        priceAlert: item.priceAlert,
-                        
-                        // Comprehensive stock data with price comparison
-                        symbol: priceComparison.symbol,
-                        name: priceComparison.name,
-                        exchange: priceComparison.exchange,
-                        
-                        // Best price data
-                        price: priceComparison.best.price,
-                        change: priceComparison.best.change,
-                        changePercent: priceComparison.best.changePercent,
-                        priceType: priceComparison.best.priceType,
-                        provider: priceComparison.best.provider,
-                        timestamp: priceComparison.best.timestamp,
-                        
-                        // Price comparison data
-                        prices: priceComparison.prices,
-                        priceVariance: priceComparison.priceVariance,
-                        confidence: priceComparison.confidence,
-                        
-                        // Alert analysis
-                        alertStatus: item.priceAlert?.enabled ? 
-                            (item.priceAlert.condition === "above" && priceComparison.best.price >= item.priceAlert.targetPrice) ||
-                            (item.priceAlert.condition === "below" && priceComparison.best.price <= item.priceAlert.targetPrice) 
-                            ? "triggered" : "active" 
-                            : "none",
-                            
-                        // Price alert details
-                        alertAnalysis: item.priceAlert?.enabled ? {
-                            targetPrice: item.priceAlert.targetPrice,
-                            condition: item.priceAlert.condition,
-                            currentPrice: priceComparison.best.price,
-                            difference: item.priceAlert.condition === "above" 
-                                ? priceComparison.best.price - item.priceAlert.targetPrice
-                                : item.priceAlert.targetPrice - priceComparison.best.price,
-                            percentageToTarget: item.priceAlert.condition === "above"
-                                ? ((priceComparison.best.price - item.priceAlert.targetPrice) / item.priceAlert.targetPrice) * 100
-                                : ((item.priceAlert.targetPrice - priceComparison.best.price) / item.priceAlert.targetPrice) * 100
-                        } : null
-                    };
-                } catch (error) {
-                    console.error(`Error fetching price data for ${item.symbol}:`, error.message);
-                    // Return basic watchlist data if price data fetch fails
-                    return {
-                        _id: item._id,
-                        userId: item.userId,
-                        symbol: item.symbol,
-                        name: item.name,
-                        exchange: item.exchange,
-                        addedAt: item.addedAt,
-                        notes: item.notes,
-                        priceAlert: item.priceAlert,
-                        price: null,
-                        change: null,
-                        changePercent: null,
-                        priceType: null,
-                        provider: null,
-                        prices: [],
-                        priceVariance: 0,
-                        confidence: "low",
-                        timestamp: null,
-                        alertStatus: "error",
-                        alertAnalysis: null
-                    };
-                }
-            })
-        );
-
-        return res.json({
-            status: "success",
-            data: enrichedWatchlist
-        });
-    } catch (error) {
-        return res.status(500).json({
-            status: "error",
-            message: error.message
-        });
-    }
-};
+    return res.json({ status: "success", data: enrichedWatchlist });
+});
 
 /**
  * Remove stock from watchlist
  * DELETE /api/watchlist/:id
  */
-exports.removeFromWatchlist = async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        const { id } = req.params;
+exports.removeFromWatchlist = asyncHandler(async (req, res) => {
+    const userId = req.user.userId;
+    const { id } = req.params;
 
-        const item = await Watchlist.findOneAndDelete({ _id: id, userId });
+    const item = await Watchlist.findOneAndDelete({ _id: id, userId });
+    if (!item) throw AppError.notFound("Watchlist item not found");
 
-        if (!item) {
-            return res.status(404).json({
-                status: "error",
-                message: "Watchlist item not found"
-            });
-        }
+    logActivity({
+        userId,
+        action: "watchlist_remove",
+        details: { symbol: item.symbol, name: item.name },
+        userInfo: { email: req.user.email, firstname: req.user.firstname, lastname: req.user.lastname },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent")
+    }).catch(() => {});
 
-        // Log activity
-        logActivity({
-            userId,
-            action: "watchlist_remove",
-            details: { symbol: item.symbol, name: item.name },
-            userInfo: { email: req.user.email, firstname: req.user.firstname, lastname: req.user.lastname },
-            ipAddress: req.ip || req.connection.remoteAddress,
-            userAgent: req.get("User-Agent")
-        }).catch(err => console.error("Activity logging failed:", err.message));
-
-        return res.json({
-            status: "success",
-            message: "Removed from watchlist"
-        });
-    } catch (error) {
-        return res.status(500).json({
-            status: "error",
-            message: error.message
-        });
-    }
-};
+    return res.json({ status: "success", message: "Removed from watchlist" });
+});
 
 /**
  * Update watchlist item (notes, alerts)
  * PUT /api/watchlist/:id
  */
-exports.updateWatchlistItem = async (req, res) => {
-    try {
-        const userId = req.user.userId;
-        const { id } = req.params;
-        const { notes, priceAlert } = req.body;
+exports.updateWatchlistItem = asyncHandler(async (req, res) => {
+    const userId = req.user.userId;
+    const { id } = req.params;
+    const { notes, priceAlert } = req.body;
 
-        const item = await Watchlist.findOneAndUpdate(
-            { _id: id, userId },
-            { notes, priceAlert },
-            { new: true }
-        );
+    const item = await Watchlist.findOneAndUpdate({ _id: id, userId }, { notes, priceAlert }, { new: true });
+    if (!item) throw AppError.notFound("Watchlist item not found");
 
-        if (!item) {
-            return res.status(404).json({
-                status: "error",
-                message: "Watchlist item not found"
-            });
-        }
+    return res.json({ status: "success", message: "Watchlist item updated", data: item });
+});
 
-        return res.json({
-            status: "success",
-            message: "Watchlist item updated",
-            data: item
-        });
-    } catch (error) {
-        return res.status(500).json({
-            status: "error",
-            message: error.message
-        });
-    }
-};
+function alertStatusFor(item, currentPrice) {
+    if (!item.priceAlert?.enabled || currentPrice == null) return "none";
+    const { condition, targetPrice } = item.priceAlert;
+    const triggered = (condition === "above" && currentPrice >= targetPrice) ||
+        (condition === "below" && currentPrice <= targetPrice);
+    return triggered ? "triggered" : "active";
+}
+
+function alertAnalysisFor(item, currentPrice) {
+    if (!item.priceAlert?.enabled || currentPrice == null) return null;
+    const { condition, targetPrice } = item.priceAlert;
+    return {
+        targetPrice,
+        condition,
+        currentPrice,
+        difference: condition === "above" ? currentPrice - targetPrice : targetPrice - currentPrice,
+        percentageToTarget: condition === "above"
+            ? ((currentPrice - targetPrice) / targetPrice) * 100
+            : ((targetPrice - currentPrice) / targetPrice) * 100
+    };
+}

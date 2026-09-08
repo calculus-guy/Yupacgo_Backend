@@ -2,8 +2,13 @@ const mongoose = require("mongoose");
 
 /**
  * OTP Model
- * Stores one-time passwords for verification
+ *
+ * `attempts` + `MAX_ATTEMPTS` added — the original had no attempt limit at
+ * all on a 6-digit code (1,000,000 combinations), which is a full
+ * brute-force account-takeover path. See otp.service.js for the enforcement.
  */
+const MAX_ATTEMPTS = 5;
+
 const OTPSchema = new mongoose.Schema(
     {
         userId: {
@@ -32,8 +37,14 @@ const OTPSchema = new mongoose.Schema(
         expiresAt: {
             type: Date,
             required: true,
-            default: () => new Date(Date.now() + 5 * 60 * 1000), // 5 minutes
-            index: true
+            default: () => new Date(Date.now() + 5 * 60 * 1000) // 5 minutes
+            // TTL index declared below (needs expireAfterSeconds, so it can't
+            // also be declared as `index: true` here without duplicating it).
+        },
+
+        attempts: {
+            type: Number,
+            default: 0
         },
 
         used: {
@@ -48,5 +59,7 @@ const OTPSchema = new mongoose.Schema(
 
 // TTL index for auto-deletion
 OTPSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+OTPSchema.statics.MAX_ATTEMPTS = MAX_ATTEMPTS;
 
 module.exports = mongoose.model("OTP", OTPSchema);

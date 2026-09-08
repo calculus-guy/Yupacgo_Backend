@@ -251,8 +251,14 @@ class StockNameEnrichmentService {
             return stocks;
         }
 
+        // Defense-in-depth: callers pull from adapters whose batch-fetch
+        // methods can legitimately produce null entries for symbols with no
+        // data (see baseAdapter.getBatchQuotes). Drop them here too rather
+        // than trusting every call site to have already filtered.
+        const cleanStocks = stocks.filter((s) => s != null);
+
         // Process in parallel for better performance
-        const enrichmentPromises = stocks.map(stock => 
+        const enrichmentPromises = cleanStocks.map(stock =>
             this.enrichStockName(stock, adapters)
         );
 

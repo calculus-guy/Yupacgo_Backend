@@ -38,7 +38,10 @@ class BaseAdapter {
         const promises = symbols.map(symbol => this.getQuote(symbol));
         const results = await Promise.allSettled(promises);
         return results
-            .filter(r => r.status === "fulfilled")
+            // A fulfilled promise can still resolve to null (adapters return
+            // null rather than throwing for a symbol with no data) — filtering
+            // on status alone let nulls through to every caller of this method.
+            .filter(r => r.status === "fulfilled" && r.value != null)
             .map(r => r.value);
     }
 

@@ -1,638 +1,421 @@
 const UserProfile = require("../models/userProfile.models");
 const RecommendationSession = require("../models/recommendationSession.models");
 const providerManager = require("./providerManager.service");
-const smartCache = require("./smartCache.service");
+const stockUniverse = require("./stockUniverse.service");
 const stockNameEnrichment = require("./stockNameEnrichment.service");
+const fx = require("./fx.service");
+const { deleteCachePattern } = require("../config/redis");
+const { RISK_LEVEL } = require("../constants/domain");
+const AppError = require("../utils/AppError");
+const logger = require("../utils/logger");
 
 /**
- * API-Driven Recommendation Engine (Optimized)
- * Now uses Provider Manager for intelligent single-provider requests
- * Eliminates parallel fetching to prevent rate limiting
+ * Recommendation Engine
+ *
+ * REWRITTEN. The previous version drew from ~25 hardcoded symbols shared by a
+ * candidate-list cache keyed only on `profileType` — and because of separate
+ * bugs in profileCalculator.service.js, `profileType` could only ever take 3
+ * values platform-wide. Two accounts landing in the same risk bucket got
+ * byte-identical recommendations, because they WERE reading the same cached
+ * list.
+ *
+ * This version:
+ *  - samples a candidate pool from stockUniverse.service (thousands of real
+ *    symbols), seeded per-user-per-day, so two accounts diverge even at the
+ *    same risk level
+ *  - fetches quotes in bounded-concurrency batches instead of one huge
+ *    sequential loop with a per-symbol company-profile lookup (the old N+1
+ *    that made onboarding take 30-60s)
+ *  - only enriches the FINAL selected picks' names (via the static map that
+ *    existed but was never wired up), not the whole candidate pool
+ *  - enforces a soft per-sector cap so results are actually diversified, not
+ *    just the top-N by raw score
+ *  - works entirely in USD internally (profile budget constraints are already
+ *    converted from NGN at profile-compute time) and attaches a Naira display
+ *    figure per recommendation for the client
  */
-class RecommendationEngineV2 {
-    constructor() {
-        console.log("✅ Recommendation Engine V2 initialized with Provider Manager integration");
-    }
 
+const CANDIDATE_POOL_SIZE = 60;
+const QUOTE_FETCH_CONCURRENCY = 8;
+const QUOTE_FETCH_TIMEOUT_MS = 10000;
+const MIN_QUALITY_PRICE_USD = 1;
+
+class RecommendationEngine {
     /**
-     * Generate personalized recommendations for a user
-     * @param {String} userId - User ID
-     * @returns {Promise<Object>} Recommendation session
+     * Generate personalized recommendations for a user.
+     * @param {String} userId
+     * @returns {Promise<Object>} the saved RecommendationSession
      */
     async generateRecommendations(userId) {
-        try {
-            // Get user profile
-            const profile = await UserProfile.findOne({ userId });
+        const profile = await UserProfile.findOne({ userId });
+        if (!profile) {
+            throw AppError.badRequest("Please complete onboarding before generating recommendations");
+        }
 
-            if (!profile) {
-                throw new Error("User profile not found. Please complete onboarding first.");
-            }
+        const seed = `${userId}:${todayBucket()}`;
 
-            // Fetch stocks from APIs based on profile
-            let candidateStocks = await this.fetchCandidateStocks(profile);
+        const candidateSymbols = await stockUniverse.sampleCandidates({
+            seed,
+            preferredSectors: profile.preferredSectors,
+            total: CANDIDATE_POOL_SIZE
+        });
 
-            if (candidateStocks.length === 0) {
-                throw new Error("No stocks available from APIs at the moment");
-            }
-
-            // Enrich stocks with company names using Provider Manager
-            candidateStocks = await this.enrichStockNames(candidateStocks);
-
-            // Filter stocks by profile constraints
-            const filteredStocks = this.filterStocksByProfile(candidateStocks, profile);
-
-            if (filteredStocks.length === 0) {
-                throw new Error("No stocks match your profile criteria");
-            }
-
-            // Score and rank stocks
-            const scoredStocks = filteredStocks.map(stock => ({
-                stock,
-                score: this.calculateMatchScore(stock, profile)
-            }));
-
-            // Sort by score (descending)
-            scoredStocks.sort((a, b) => b.score.total - a.score.total);
-
-            // Select top recommendations based on diversification level
-            const recommendationCount = Math.min(
-                profile.diversificationLevel.maxAssets,
-                Math.max(
-                    profile.diversificationLevel.minAssets,
-                    scoredStocks.length
-                )
+        if (candidateSymbols.length === 0) {
+            throw AppError.unavailable(
+                "The stock universe is temporarily unavailable. Please try again shortly."
             );
+        }
 
-            const topStocks = scoredStocks.slice(0, recommendationCount);
+        const quoted = await this._fetchQuotesBounded(candidateSymbols);
 
-            // Build recommendations
-            const recommendations = topStocks.map((item, index) => {
-                const allocation = this.calculateAllocation(
-                    index,
-                    recommendationCount,
-                    profile.riskLevel
-                );
+        if (quoted.length === 0) {
+            throw AppError.unavailable(
+                "Market data providers are temporarily unavailable. Please try again shortly."
+            );
+        }
+
+        const eligible = this._filterByProfile(quoted, profile);
+        if (eligible.length === 0) {
+            throw AppError.notFound(
+                "No stocks currently match your profile's constraints. Try adjusting your budget or risk tolerance."
+            );
+        }
+
+        const scored = eligible
+            .map((stock) => ({ stock, score: this._scoreStock(stock, profile) }))
+            .sort((a, b) => b.score.total - a.score.total);
+
+        const picks = this._selectDiversified(scored, profile.diversificationLevel);
+
+        const enriched = await stockNameEnrichment.enrichStockNames(picks.map((p) => p.stock));
+
+        const recommendations = await Promise.all(
+            picks.map(async (item, index) => {
+                const stock = { ...item.stock, ...enriched[index] };
+                const allocation = this._calculateAllocation(index, picks.length, profile.riskLevel);
+                const positionSizeUsd = this._calculatePositionSize(allocation, profile.budgetConstraints);
+                const priceInfo = await fx.withNairaEquivalent(stock.price);
 
                 return {
-                    symbol: item.stock.symbol,
-                    name: item.stock.name || item.stock.symbol,
-                    exchange: item.stock.exchange,
+                    symbol: stock.symbol,
+                    name: stock.name || stock.symbol,
+                    exchange: stock.exchange,
                     matchScore: item.score.total,
                     matchReasons: item.score.reasons,
-                    recommendedPrice: item.stock.price,
-                    currency: item.stock.currency || "USD",
+                    recommendedPrice: round2(stock.price),
+                    recommendedPriceNgn: priceInfo.ngn,
+                    currency: "USD",
                     suggestedAllocation: allocation,
-                    suggestedPositionSize: this.calculatePositionSize(
-                        allocation,
-                        profile.budgetConstraints.minPositionSize
-                    ),
+                    suggestedPositionSize: round2(positionSizeUsd),
+                    suggestedPositionSizeNgn: Math.round(positionSizeUsd * priceInfo.fx.ngnPerUsd),
                     matchedTags: item.score.matchedTags,
-                    priceChange: item.stock.change,
-                    priceChangePercent: item.stock.changePercent,
-                    provider: item.stock.provider
+                    priceChange: stock.change,
+                    priceChangePercent: stock.changePercent,
+                    provider: stock.provider,
+                    assetType: stock.assetType,
+                    sector: stock.sector
                 };
-            });
+            })
+        );
 
-            // Create recommendation session
-            const session = await RecommendationSession.create({
-                userId,
-                profileSnapshot: {
-                    profileType: profile.profileType,
-                    riskLevel: profile.riskLevel,
-                    investmentHorizon: profile.investmentHorizon,
-                    goal: profile.goal
-                },
-                recommendations,
-                sessionType: "personalized"
-            });
+        // Only one session should ever be "the latest" for a user — the old
+        // code never flipped this flag, so the collection grew unbounded with
+        // every past session still marked active.
+        await RecommendationSession.updateMany({ userId, isActive: true }, { isActive: false });
 
-            return session;
-        } catch (error) {
-            console.error("Error generating recommendations:", error.message);
-            throw error;
-        }
+        return RecommendationSession.create({
+            userId,
+            profileSnapshot: {
+                profileType: profile.profileType,
+                riskLevel: profile.riskLevel,
+                investmentHorizon: profile.investmentHorizon,
+                goal: profile.goal
+            },
+            recommendations,
+            sessionType: "personalized",
+            isActive: true
+        });
     }
 
+    // -------------------------------------------------------------------
+    // Candidate fetching
+    // -------------------------------------------------------------------
+
     /**
-     * Fetch candidate stocks using Provider Manager (optimized)
-     * @param {Object} profile - User profile
-     * @returns {Promise<Array>} Array of stocks
+     * Fetch quotes for a symbol list with bounded concurrency, so we never fire
+     * dozens of simultaneous provider requests (the old code's `Promise.all`
+     * over an unbounded list) but also don't fetch strictly sequentially (the
+     * old code's per-symbol `for...of` that made onboarding take 30-60s).
      */
-    async fetchCandidateStocks(profile) {
+    async _fetchQuotesBounded(candidates) {
+        const results = [];
+        for (let i = 0; i < candidates.length; i += QUOTE_FETCH_CONCURRENCY) {
+            const batch = candidates.slice(i, i + QUOTE_FETCH_CONCURRENCY);
+            const settled = await Promise.allSettled(
+                batch.map((c) => this._fetchOneQuote(c))
+            );
+            for (const r of settled) {
+                if (r.status === "fulfilled" && r.value) results.push(r.value);
+            }
+        }
+        return results;
+    }
+
+    async _fetchOneQuote(candidate) {
         try {
-            // Check cache first
-            const cacheKey = smartCache.generateKey('recommendations', profile.profileType);
-            const cached = await smartCache.get(cacheKey);
-            if (cached && !cached.metadata.isStale) {
-                console.log("✅ Using cached recommendation stocks");
-                return cached.data;
-            }
+            const quote = await Promise.race([
+                providerManager.getQuote(candidate.symbol),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error("quote timeout")), QUOTE_FETCH_TIMEOUT_MS)
+                )
+            ]);
 
-            console.log("🔄 Fetching stocks using Provider Manager (single provider approach)...");
+            if (!quote || !quote.price || quote.price <= 0) return null;
 
-            const stocks = [];
-
-            // Strategy: Use Provider Manager to fetch different types of stocks
-            // This eliminates parallel fetching while maintaining diversity
-
-            // 1. Fetch by preferred sectors (using primary available provider)
-            if (profile.preferredSectors && profile.preferredSectors.length > 0) {
-                for (const sector of profile.preferredSectors.slice(0, 2)) {
-                    try {
-                        console.log(`🔍 Fetching ${sector} sector stocks...`);
-                        const sectorStocks = await this.fetchStocksBySector(sector);
-                        if (sectorStocks && sectorStocks.length > 0) {
-                            stocks.push(...sectorStocks.slice(0, 10)); // Limit per sector
-                        }
-                    } catch (error) {
-                        console.warn(`Failed to fetch ${sector} stocks:`, error.message);
-                    }
-                }
-            }
-
-            // 2. Fetch popular stocks (using primary available provider)
-            try {
-                console.log("🔍 Fetching popular stocks...");
-                const popularStocks = await this.fetchPopularStocks();
-                if (popularStocks && popularStocks.length > 0) {
-                    stocks.push(...popularStocks.slice(0, 15));
-                }
-            } catch (error) {
-                console.warn("Failed to fetch popular stocks:", error.message);
-            }
-
-            // 3. Fetch trending stocks (using primary available provider)
-            try {
-                console.log("🔍 Fetching trending stocks...");
-                const trendingStocks = await this.fetchTrendingStocks();
-                if (trendingStocks && trendingStocks.length > 0) {
-                    stocks.push(...trendingStocks.slice(0, 10));
-                }
-            } catch (error) {
-                console.warn("Failed to fetch trending stocks:", error.message);
-            }
-
-            // 4. Add some default high-quality stocks if we don't have enough
-            if (stocks.length < 10) {
-                const defaultStocks = await this.fetchDefaultStocks();
-                stocks.push(...defaultStocks);
-            }
-
-            // Deduplicate by symbol
-            const uniqueStocks = [];
-            const seen = new Set();
-
-            for (const stock of stocks) {
-                if (stock && stock.symbol && !seen.has(stock.symbol)) {
-                    seen.add(stock.symbol);
-                    uniqueStocks.push({
-                        ...stock,
-                        source: 'provider_manager',
-                        fetchedAt: new Date().toISOString()
-                    });
-                }
-            }
-
-            // Cache the results
-            await smartCache.set(cacheKey, uniqueStocks, 300); // 5 minutes cache
-
-            console.log(`✅ Fetched ${uniqueStocks.length} unique stocks using optimized approach`);
-            
-            return uniqueStocks;
+            return {
+                symbol: candidate.symbol,
+                name: candidate.name,
+                assetType: candidate.assetType,
+                exchange: quote.exchange || candidate.exchange,
+                price: quote.price,
+                change: quote.change,
+                changePercent: quote.changePercent,
+                volume: quote.volume,
+                provider: quote.metadata?.provider,
+                sector: stockUniverse.inferSector(candidate.symbol)
+            };
         } catch (error) {
-            console.error("Error fetching candidate stocks:", error.message);
-            
-            // Try to return cached data even if stale
-            const staleCache = await smartCache.getStale(cacheKey);
-            if (staleCache) {
-                console.log("⚠️ Returning stale cached stocks due to fetch error");
-                return staleCache.data;
-            }
-            
-            return [];
+            logger.debug("Quote fetch failed for candidate", { symbol: candidate.symbol, err: error.message });
+            return null;
         }
     }
 
-    /**
-     * Fetch stocks by sector using Provider Manager
-     * @param {String} sector - Sector name
-     * @returns {Promise<Array>} Sector stocks
-     */
-    async fetchStocksBySector(sector) {
-        try {
-            // Use Provider Manager to get sector stocks from the best available provider
-            const providers = providerManager.providers;
-            
-            for (const provider of providers) {
-                if (provider.status === 'disabled') continue;
-                
-                try {
-                    if (provider.adapter.getStocksBySector) {
-                        const stocks = await provider.adapter.getStocksBySector(sector);
-                        if (stocks && stocks.length > 0) {
-                            console.log(`✅ Got ${stocks.length} ${sector} stocks from ${provider.name}`);
-                            return stocks.map(stock => ({
-                                ...stock,
-                                provider: provider.name,
-                                source: 'sector_fetch'
-                            }));
-                        }
-                    }
-                } catch (error) {
-                    console.warn(`${provider.name} failed for sector ${sector}:`, error.message);
-                    continue;
-                }
-            }
-            
-            return [];
-        } catch (error) {
-            console.error(`Error fetching ${sector} stocks:`, error.message);
-            return [];
-        }
-    }
+    // -------------------------------------------------------------------
+    // Filtering
+    // -------------------------------------------------------------------
 
-    /**
-     * Fetch popular stocks using Provider Manager
-     * @returns {Promise<Array>} Popular stocks
-     */
-    async fetchPopularStocks() {
-        try {
-            const providers = providerManager.providers;
-            
-            for (const provider of providers) {
-                if (provider.status === 'disabled') continue;
-                
-                try {
-                    if (provider.adapter.getPopularStocks) {
-                        const stocks = await provider.adapter.getPopularStocks();
-                        if (stocks && stocks.length > 0) {
-                            console.log(`✅ Got ${stocks.length} popular stocks from ${provider.name}`);
-                            return stocks.map(stock => ({
-                                ...stock,
-                                provider: provider.name,
-                                source: 'popular_fetch'
-                            }));
-                        }
-                    }
-                } catch (error) {
-                    console.warn(`${provider.name} failed for popular stocks:`, error.message);
-                    continue;
-                }
-            }
-            
-            return [];
-        } catch (error) {
-            console.error("Error fetching popular stocks:", error.message);
-            return [];
-        }
-    }
+    _filterByProfile(stocks, profile) {
+        const { budgetConstraints, goalConstraints } = profile;
 
-    /**
-     * Fetch trending stocks using Provider Manager
-     * @returns {Promise<Array>} Trending stocks
-     */
-    async fetchTrendingStocks() {
-        try {
-            const providers = providerManager.providers;
-            
-            for (const provider of providers) {
-                if (provider.status === 'disabled') continue;
-                
-                try {
-                    if (provider.adapter.getTrending) {
-                        const stocks = await provider.adapter.getTrending();
-                        if (stocks && stocks.length > 0) {
-                            console.log(`✅ Got ${stocks.length} trending stocks from ${provider.name}`);
-                            return stocks.map(stock => ({
-                                ...stock,
-                                provider: provider.name,
-                                source: 'trending_fetch'
-                            }));
-                        }
-                    }
-                } catch (error) {
-                    console.warn(`${provider.name} failed for trending stocks:`, error.message);
-                    continue;
-                }
-            }
-            
-            return [];
-        } catch (error) {
-            console.error("Error fetching trending stocks:", error.message);
-            return [];
-        }
-    }
+        return stocks.filter((stock) => {
+            // Sub-$1 stocks carry outsized volatility/delisting risk regardless
+            // of which major exchange they're technically listed on — wrong
+            // default for a beginner-first platform even when "affordable."
+            if (stock.price < MIN_QUALITY_PRICE_USD) return false;
 
-    /**
-     * Get default high-quality stocks as fallback
-     * @returns {Promise<Array>} Default stocks
-     */
-    async fetchDefaultStocks() {
-        const defaultSymbols = [
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA',
-            'META', 'NVDA', 'JPM', 'V', 'WMT',
-            'DIS', 'NFLX', 'ADBE', 'CRM', 'ORCL'
-        ];
-
-        const stocks = [];
-        
-        for (const symbol of defaultSymbols.slice(0, 10)) {
-            try {
-                const quote = await providerManager.getQuote(symbol);
-                if (quote) {
-                    stocks.push({
-                        symbol: quote.symbol,
-                        name: quote.name,
-                        price: quote.price,
-                        exchange: quote.exchange,
-                        provider: quote.metadata?.provider,
-                        source: 'default_fallback'
-                    });
-                }
-            } catch (error) {
-                console.warn(`Failed to get default stock ${symbol}:`, error.message);
-            }
-        }
-
-        console.log(`✅ Got ${stocks.length} default fallback stocks`);
-        return stocks;
-    }
-
-    /**
-     * Enrich stock names using Provider Manager
-     * @param {Array} stocks - Array of stocks to enrich
-     * @returns {Promise<Array>} Enriched stocks
-     */
-    async enrichStockNames(stocks) {
-        try {
-            const enrichedStocks = [];
-            
-            for (const stock of stocks) {
-                if (!stock.name || stock.name === stock.symbol || stock.name.trim() === "") {
-                    try {
-                        const profile = await providerManager.getCompanyProfile(stock.symbol);
-                        if (profile && profile.name) {
-                            enrichedStocks.push({
-                                ...stock,
-                                name: profile.name,
-                                exchange: profile.exchange || stock.exchange
-                            });
-                        } else {
-                            enrichedStocks.push(stock);
-                        }
-                    } catch (error) {
-                        enrichedStocks.push(stock);
-                    }
-                } else {
-                    enrichedStocks.push(stock);
-                }
-            }
-            
-            return enrichedStocks;
-        } catch (error) {
-            console.error("Error enriching stock names:", error.message);
-            return stocks;
-        }
-    }
-
-    /**
-     * Filter stocks by profile constraints
-     * @param {Array} stocks - Array of stocks
-     * @param {Object} profile - User profile
-     * @returns {Array} Filtered stocks
-     */
-    filterStocksByProfile(stocks, profile) {
-        return stocks.filter(stock => {
-            // Filter by budget constraints
-            if (profile.budgetConstraints.maxStockPrice && stock.price) {
-                if (stock.price > profile.budgetConstraints.maxStockPrice) {
-                    return false;
-                }
-            }
-
-            // Filter by volatility if goal requires it
-            if (profile.goalConstraints.avoidHighVolatility) {
-                // Avoid stocks with high price change percentage
-                if (stock.changePercent && Math.abs(stock.changePercent) > 5) {
-                    return false;
-                }
-            }
-
-            // Must have valid price
-            if (!stock.price || stock.price <= 0) {
+            if (budgetConstraints.maxSharePriceUsd && stock.price > budgetConstraints.maxSharePriceUsd) {
                 return false;
+            }
+
+            if (goalConstraints.avoidHighVolatility && stock.changePercent != null) {
+                if (Math.abs(stock.changePercent) > 5) return false;
             }
 
             return true;
         });
     }
 
-    /**
-     * Calculate match score for a stock against user profile
-     * @param {Object} stock - Stock data from API
-     * @param {Object} profile - User profile
-     * @returns {Object} Score breakdown
-     */
-    calculateMatchScore(stock, profile) {
+    // -------------------------------------------------------------------
+    // Scoring
+    // -------------------------------------------------------------------
+
+    _scoreStock(stock, profile) {
         let score = 0;
         const reasons = [];
         const matchedTags = [];
 
-        // Sector match (20 points) - infer from symbol
-        const stockSector = this.inferSector(stock.symbol);
-        if (profile.preferredSectors.includes(stockSector)) {
-            score += 20;
-            reasons.push(`Matches your interest in ${stockSector}`);
-            matchedTags.push(stockSector);
+        // Sector match (25 pts) — the signal that was always dead before.
+        if (stock.sector && profile.preferredSectors.includes(stock.sector)) {
+            score += 25;
+            reasons.push(`Matches your interest in ${humanizeSector(stock.sector)}`);
+            matchedTags.push(stock.sector);
         }
 
-        // Risk alignment based on volatility (25 points)
-        const volatility = this.inferVolatility(stock);
-        const riskAlignment = this.getRiskAlignment(volatility, profile.riskLevel);
-        score += riskAlignment.score;
-        if (riskAlignment.score > 0) {
-            reasons.push(riskAlignment.reason);
-        }
+        // Risk alignment (25 pts)
+        const volatility = inferVolatility(stock.changePercent);
+        const alignment = riskAlignment(volatility, profile.riskLevel);
+        score += alignment.score;
+        if (alignment.score > 0) reasons.push(alignment.reason);
 
-        // Price stability (25 points)
-        if (stock.changePercent !== null && stock.changePercent !== undefined) {
-            const absChange = Math.abs(stock.changePercent);
-            
-            if (profile.goalConstraints.preferStableGrowth && absChange < 2) {
+        // Price behaviour vs goal (up to 25 pts)
+        if (stock.changePercent != null) {
+            const abs = Math.abs(stock.changePercent);
+            if (profile.goalConstraints.preferStableGrowth && abs < 2) {
                 score += 15;
-                reasons.push("Stable price movement (good for long-term goals)");
+                reasons.push("Stable price movement, fits your goal");
                 matchedTags.push("stable");
             }
-
             if (profile.goalConstraints.preferGrowth && stock.changePercent > 0) {
                 score += 10;
                 reasons.push("Positive price momentum");
                 matchedTags.push("growth");
             }
+            if (profile.goalConstraints.preferDividends && stock.assetType === "stock") {
+                // We don't have dividend yield from the free-tier quote endpoint;
+                // this is a soft nudge toward established large-caps, not a claim.
+                score += 5;
+            }
         }
 
-        // Liquidity (15 points) - high volume stocks
-        if (stock.volume && stock.volume > 1000000) {
-            score += 15;
-            reasons.push("Highly liquid (easy to buy/sell)");
+        // Liquidity (10 pts)
+        if (stock.volume && stock.volume > 500000) {
+            score += 10;
+            reasons.push("Highly liquid — easy to buy and sell");
             matchedTags.push("liquid");
         }
 
-        // ETF preference (15 points)
-        const isETF = this.isETF(stock.symbol);
-        if (profile.budgetConstraints.recommendETFs && isETF) {
+        // ETF fit for budget-constrained / diversification-seeking profiles (15 pts)
+        if (profile.budgetConstraints.stronglyPreferETFs && stock.assetType === "etf") {
             score += 15;
-            reasons.push("ETF (diversified and budget-friendly)");
+            reasons.push("An ETF gives you diversification your budget can't buy one stock at a time");
+            matchedTags.push("etf");
+        } else if (profile.budgetConstraints.recommendETFs && stock.assetType === "etf") {
+            score += 8;
             matchedTags.push("etf");
         }
 
-        // Affordable (10 points bonus)
-        if (stock.price && stock.price < profile.budgetConstraints.maxStockPrice * 0.5) {
-            score += 10;
+        // Comfortably affordable within the position budget (bonus 5 pts)
+        if (stock.price < profile.budgetConstraints.minPositionUsd * 3) {
+            score += 5;
             reasons.push("Well within your budget");
         }
 
-        return {
-            total: score,
-            reasons,
-            matchedTags
-        };
+        return { total: score, reasons, matchedTags };
     }
 
-    /**
-     * Infer sector from stock symbol
-     */
-    inferSector(symbol) {
-        const sectorMap = {
-            tech: ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CSCO", "INTC", "AMD", "CRM", "ADBE", "NFLX"],
-            finance: ["JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA", "AXP", "BLK", "SCHW"],
-            healthcare: ["JNJ", "UNH", "PFE", "ABBV", "TMO", "MRK", "ABT", "DHR", "LLY", "BMY"],
-            consumer: ["AMZN", "WMT", "HD", "MCD", "NKE", "SBUX", "TGT", "LOW", "COST", "DG", "DIS"],
-            energy: ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL"],
-            diversified: ["SPY", "VOO", "QQQ", "VTI", "IVV", "DIA", "IWM"]
-        };
+    // -------------------------------------------------------------------
+    // Selection with a diversification cap
+    // -------------------------------------------------------------------
 
-        for (const [sector, symbols] of Object.entries(sectorMap)) {
-            if (symbols.includes(symbol)) {
-                return sector;
+    /**
+     * Take the top-scored stocks, but cap how many can come from one sector so
+     * the result is an actual diversified set rather than "top N by score"
+     * (which, for a tech-heavy universe, tended to be all tech).
+     */
+    _selectDiversified(scoredSorted, diversificationLevel) {
+        const { minAssets, maxAssets } = diversificationLevel;
+        const maxPerSector = Math.max(2, Math.ceil(maxAssets * 0.4));
+
+        const picks = [];
+        const sectorCounts = {};
+
+        for (const item of scoredSorted) {
+            if (picks.length >= maxAssets) break;
+
+            const sector = item.stock.sector || "unclassified";
+            const count = sectorCounts[sector] || 0;
+
+            if (count >= maxPerSector && picks.length >= minAssets) continue;
+
+            picks.push(item);
+            sectorCounts[sector] = count + 1;
+        }
+
+        // If the sector cap left us short of the minimum, backfill from the
+        // remainder ignoring the cap rather than returning too few picks.
+        if (picks.length < minAssets) {
+            for (const item of scoredSorted) {
+                if (picks.length >= minAssets) break;
+                if (!picks.includes(item)) picks.push(item);
             }
         }
 
-        return "other";
+        return picks;
     }
 
-    /**
-     * Infer volatility from price change
-     */
-    inferVolatility(stock) {
-        if (!stock.changePercent) return "medium";
+    // -------------------------------------------------------------------
+    // Sizing
+    // -------------------------------------------------------------------
 
-        const absChange = Math.abs(stock.changePercent);
-        if (absChange < 2) return "low";
-        if (absChange < 5) return "medium";
-        return "high";
-    }
-
-    /**
-     * Check if symbol is an ETF
-     */
-    isETF(symbol) {
-        const etfs = ["SPY", "VOO", "QQQ", "VTI", "IVV", "DIA", "IWM", "EFA", "VEA", "AGG"];
-        return etfs.includes(symbol);
-    }
-
-    /**
-     * Get risk alignment score
-     */
-    getRiskAlignment(stockVolatility, userRiskLevel) {
-        const alignmentMatrix = {
-            Conservative: {
-                low: { score: 25, reason: "Low volatility matches your conservative profile" },
-                medium: { score: 10, reason: "Moderate volatility acceptable" },
-                high: { score: 0, reason: "" }
-            },
-            Balanced: {
-                low: { score: 15, reason: "Low volatility provides stability" },
-                medium: { score: 25, reason: "Moderate volatility matches your balanced profile" },
-                high: { score: 10, reason: "Some volatility acceptable" }
-            },
-            Aggressive: {
-                low: { score: 10, reason: "Low volatility provides balance" },
-                medium: { score: 15, reason: "Moderate volatility acceptable" },
-                high: { score: 25, reason: "High volatility matches your aggressive profile" }
-            }
-        };
-
-        return alignmentMatrix[userRiskLevel]?.[stockVolatility] || { score: 0, reason: "" };
-    }
-
-    /**
-     * Calculate allocation percentage
-     */
-    calculateAllocation(index, total, riskLevel) {
-        if (riskLevel === "Conservative") {
-            return parseFloat((100 / total).toFixed(2));
+    _calculateAllocation(index, total, riskLevel) {
+        if (riskLevel === RISK_LEVEL.CONSERVATIVE) {
+            return round2(100 / total);
         }
-
-        if (riskLevel === "Balanced") {
-            const weight = 100 / (total * (1 + index * 0.1));
-            return parseFloat(weight.toFixed(2));
+        if (riskLevel === RISK_LEVEL.BALANCED) {
+            return round2(100 / (total * (1 + index * 0.1)));
         }
-
-        const weight = 100 / (total * (1 + index * 0.3));
-        return parseFloat(weight.toFixed(2));
+        return round2(100 / (total * (1 + index * 0.3)));
     }
 
-    /**
-     * Calculate position size
-     */
-    calculatePositionSize(allocation, minPositionSize) {
-        return Math.max(minPositionSize, minPositionSize * (allocation / 10));
+    _calculatePositionSize(allocationPercent, budgetConstraints) {
+        // Position size scales with the user's actual monthly budget, floored at
+        // their configured minimum. The old formula used a stray `/ 10` against
+        // a field that mixed NGN and USD units.
+        const scaled = budgetConstraints.monthlyBudgetUsd * (allocationPercent / 100);
+        return Math.max(budgetConstraints.minPositionUsd, scaled);
     }
 
+    // -------------------------------------------------------------------
+    // Cache / history
+    // -------------------------------------------------------------------
+
     /**
-     * Clear recommendation cache to force fresh fetch
-     * @param {String} profileType - Profile type to clear (optional)
-     * @returns {Promise<Boolean>} Success status
+     * There is no shared candidate-list cache anymore (that was the mechanism
+     * behind the "everyone gets the same list" bug) — each request samples
+     * fresh from the universe. This clears the underlying provider-level quote
+     * and profile caches, which is the useful sense of "give me fresh data."
      */
-    async clearRecommendationCache(profileType = null) {
+    async clearRecommendationCache() {
         try {
-            if (profileType) {
-                const cacheKey = smartCache.generateKey('recommendations', profileType);
-                await smartCache.delete(cacheKey);
-                console.log(`🗑️ Cleared recommendation cache for profile type: ${profileType}`);
-            } else {
-                // Clear all recommendation caches
-                const profileTypes = ['Conservative', 'Balanced', 'Aggressive'];
-                for (const type of profileTypes) {
-                    const cacheKey = smartCache.generateKey('recommendations', type);
-                    await smartCache.delete(cacheKey);
-                }
-                console.log("🗑️ Cleared all recommendation caches");
-            }
+            await deleteCachePattern("quote:*");
+            await deleteCachePattern("profile:*");
             return true;
         } catch (error) {
-            console.error("Error clearing recommendation cache:", error.message);
+            logger.exception("Failed to clear provider caches", error);
             return false;
         }
     }
 
-    /**
-     * Get user's recommendation history
-     */
     async getRecommendationHistory(userId, limit = 10) {
-        return await RecommendationSession.find({ userId })
-            .sort({ generatedAt: -1 })
-            .limit(limit);
+        return RecommendationSession.find({ userId }).sort({ generatedAt: -1 }).limit(limit);
     }
 
-    /**
-     * Get latest recommendations
-     */
     async getLatestRecommendations(userId) {
-        return await RecommendationSession.findOne({ userId, isActive: true })
-            .sort({ generatedAt: -1 });
+        return RecommendationSession.findOne({ userId, isActive: true }).sort({ generatedAt: -1 });
     }
 }
 
-module.exports = new RecommendationEngineV2();
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
+function todayBucket() {
+    return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+}
+
+function inferVolatility(changePercent) {
+    if (changePercent == null) return "medium";
+    const abs = Math.abs(changePercent);
+    if (abs < 2) return "low";
+    if (abs < 5) return "medium";
+    return "high";
+}
+
+function riskAlignment(volatility, riskLevel) {
+    const matrix = {
+        [RISK_LEVEL.CONSERVATIVE]: {
+            low: { score: 25, reason: "Low volatility matches your conservative profile" },
+            medium: { score: 10, reason: "Moderate volatility, acceptable but not ideal" },
+            high: { score: 0, reason: "" }
+        },
+        [RISK_LEVEL.BALANCED]: {
+            low: { score: 15, reason: "Low volatility adds stability to your balanced profile" },
+            medium: { score: 25, reason: "Moderate volatility matches your balanced profile" },
+            high: { score: 10, reason: "Some volatility acceptable for a balanced profile" }
+        },
+        [RISK_LEVEL.AGGRESSIVE]: {
+            low: { score: 10, reason: "Low volatility provides some ballast" },
+            medium: { score: 15, reason: "Moderate volatility acceptable" },
+            high: { score: 25, reason: "High volatility matches your aggressive profile" }
+        }
+    };
+    return matrix[riskLevel]?.[volatility] || { score: 0, reason: "" };
+}
+
+function humanizeSector(sector) {
+    return sector.replace(/_/g, " ");
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+module.exports = new RecommendationEngine();

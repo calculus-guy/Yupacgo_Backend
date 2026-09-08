@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { RISK_LEVELS, EXPERIENCE_LEVELS, INVESTMENT_HORIZONS, GOALS, BUDGETS, APPROACHES, SECTORS } = require("../constants/domain");
 
 const UserProfileSchema = new mongoose.Schema(
     {
@@ -8,7 +9,7 @@ const UserProfileSchema = new mongoose.Schema(
             required: true,
             unique: true
         },
-        
+
         riskScore: {
             type: Number,
             required: true,
@@ -17,42 +18,44 @@ const UserProfileSchema = new mongoose.Schema(
         },
         riskLevel: {
             type: String,
-            enum: ["Conservative", "Balanced", "Aggressive"],
+            enum: RISK_LEVELS,
             required: true
         },
-        
+
         experienceLevel: {
             type: String,
-            enum: ["Beginner", "Intermediate", "Advanced"],
+            enum: EXPERIENCE_LEVELS,
             required: true
         },
         investmentHorizon: {
             type: String,
-            enum: ["short_term", "medium_term", "long_term", "very_long_term"],
+            enum: INVESTMENT_HORIZONS,
             required: true
         },
-        
+
         goal: {
             type: String,
+            enum: GOALS,
             required: true
         },
         preferredSectors: {
             type: [String],
+            enum: SECTORS,
             default: []
         },
-        
+
         monthlyBudget: {
             type: String,
-            enum: ["low", "medium", "high"],
+            enum: BUDGETS,
             required: true
         },
-        
+
         approach: {
             type: String,
-            enum: ["passive", "active"],
+            enum: APPROACHES,
             required: true
         },
-        
+
         profileType: {
             type: String,
             required: true
@@ -75,19 +78,30 @@ const UserProfileSchema = new mongoose.Schema(
             liquidityPriority: String
         },
 
+        /**
+         * Rewritten to actually carry USD figures (converted from the user's
+         * NGN budget at profile-compute time) instead of a single ambiguous
+         * `maxStockPrice` that was compared against USD prices without ever
+         * being converted.
+         */
         budgetConstraints: {
-            maxStockPrice: Number,
+            budgetLevel: String,
+            monthlyBudgetNgn: Number,
+            monthlyBudgetUsd: Number,
+            fxRateUsed: Number,
+            maxSharePriceUsd: { type: Number, default: null },
             preferFractional: Boolean,
-            minPositionSize: Number,
-            recommendETFs: Boolean,
+            minPositionUsd: Number,
             maxPositionsCount: Number,
-            budgetLevel: String
+            stronglyPreferETFs: Boolean,
+            recommendETFs: Boolean
         },
 
         diversificationLevel: {
             level: String,
             minAssets: Number,
             maxAssets: Number,
+            budgetLimited: Boolean,
             description: String
         },
 
@@ -99,6 +113,7 @@ const UserProfileSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-UserProfileSchema.index({ userId: 1 });
+// No separate index() call needed — `unique: true` on userId above already
+// creates one; declaring both is what produced the duplicate-index warning.
 
 module.exports = mongoose.model("UserProfile", UserProfileSchema);
