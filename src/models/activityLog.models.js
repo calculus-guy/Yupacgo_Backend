@@ -54,11 +54,11 @@ const ActivityLogSchema = new mongoose.Schema(
         ipAddress: String,
         userAgent: String,
 
-        // Timestamp
+        // Timestamp — indexed below via the TTL index, not here, to avoid
+        // declaring the same {timestamp:1} index twice.
         timestamp: {
             type: Date,
-            default: Date.now,
-            index: true
+            default: Date.now
         }
     },
     { timestamps: true }

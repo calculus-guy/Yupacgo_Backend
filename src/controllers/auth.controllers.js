@@ -8,6 +8,7 @@ const { createOtp, verifyOtp, consumeOtp } = require("../services/otp.service");
 const { signAccessToken, issueRefreshToken, revokeRefreshToken, revokeAllRefreshTokens } = require("../services/token.service");
 const { validatePassword } = require("../validators/password.validator");
 const { needsOnboardingRefresh } = require("../services/onboardingHealth.service");
+const { normalizeEmail } = require("../utils/normalizeEmail");
 const { asyncHandler } = require("../middleware/errorHandler");
 const AppError = require("../utils/AppError");
 
@@ -17,11 +18,12 @@ const clientMeta = (req) => ({
 });
 
 exports.signup = asyncHandler(async (req, res) => {
-    const { firstname, lastname, email, password } = req.body;
+    let { firstname, lastname, email, password } = req.body;
 
     if (!firstname || !lastname || !email || !password) {
         throw AppError.badRequest("All fields are required");
     }
+    email = normalizeEmail(email);
 
     const passwordError = validatePassword(password);
     if (passwordError) throw AppError.badRequest(passwordError);
@@ -59,9 +61,10 @@ exports.signup = asyncHandler(async (req, res) => {
 });
 
 exports.login = asyncHandler(async (req, res) => {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
 
     if (!email || !password) throw AppError.badRequest("Email and password are required");
+    email = normalizeEmail(email);
 
     const user = await User.findOne({ email });
     // Deliberately generic message on both branches below — confirming an
@@ -107,8 +110,9 @@ exports.login = asyncHandler(async (req, res) => {
 });
 
 exports.adminLogin = asyncHandler(async (req, res) => {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
     if (!email || !password) throw AppError.badRequest("Email and password are required");
+    email = normalizeEmail(email);
 
     const user = await User.findOne({ email, role: "admin" });
     if (!user) throw AppError.unauthorized("Invalid admin credentials");
@@ -175,8 +179,9 @@ exports.logout = asyncHandler(async (req, res) => {
  * POST /api/auth/forgot-password
  */
 exports.forgotPassword = asyncHandler(async (req, res) => {
-    const { email } = req.body;
+    let { email } = req.body;
     if (!email) throw AppError.badRequest("Email is required");
+    email = normalizeEmail(email);
 
     const genericResponse = {
         status: "success",
@@ -211,8 +216,9 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
  * POST /api/auth/verify-reset-otp
  */
 exports.verifyResetOTP = asyncHandler(async (req, res) => {
-    const { email, otp } = req.body;
+    let { email, otp } = req.body;
     if (!email || !otp) throw AppError.badRequest("Email and code are required");
+    email = normalizeEmail(email);
 
     const result = await verifyOtp({ email, otp, purpose: "password_reset" });
 
@@ -232,11 +238,12 @@ exports.verifyResetOTP = asyncHandler(async (req, res) => {
  * POST /api/auth/reset-password
  */
 exports.resetPassword = asyncHandler(async (req, res) => {
-    const { email, otp, newPassword, confirmPassword } = req.body;
+    let { email, otp, newPassword, confirmPassword } = req.body;
 
     if (!email || !otp || !newPassword || !confirmPassword) {
         throw AppError.badRequest("All fields are required");
     }
+    email = normalizeEmail(email);
     if (newPassword !== confirmPassword) {
         throw AppError.badRequest("Passwords do not match");
     }

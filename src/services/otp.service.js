@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const OTP = require("../models/otp.models");
+const { normalizeEmail } = require("../utils/normalizeEmail");
 
 /**
  * OTP Service — shared by password-reset, password-change, and (future)
@@ -34,6 +35,7 @@ function generateOtp() {
  * @returns {Promise<string>} the plaintext OTP (caller is responsible for emailing it)
  */
 async function createOtp({ userId, email, purpose }) {
+    email = normalizeEmail(email);
     const scope = userId ? { userId, purpose } : { email, purpose };
     await OTP.deleteMany(scope);
 
@@ -60,6 +62,7 @@ async function createOtp({ userId, email, purpose }) {
  * @returns {Promise<{valid:boolean, reason?:string, record?:Object}>}
  */
 async function verifyOtp({ userId, email, otp, purpose }) {
+    email = normalizeEmail(email);
     const scope = userId ? { userId, purpose } : { email, purpose };
 
     const record = await OTP.findOne({

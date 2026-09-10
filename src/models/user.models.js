@@ -4,7 +4,9 @@ const UserSchema = new mongoose.Schema(
     {
         firstname: { type: String, required: true },
         lastname: { type: String, required: true },
-        email: { type: String, required: true, unique: true },
+        // lowercase+trim at the schema level so this holds even for any future
+        // write path that forgets to normalize explicitly (see normalizeEmail.js).
+        email: { type: String, required: true, unique: true, lowercase: true, trim: true },
         password: { type: String, required: true },
         role: {
              type: String,

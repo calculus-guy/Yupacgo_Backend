@@ -18,9 +18,13 @@ const OTPSchema = new mongoose.Schema(
             index: true
         },
 
+        // lowercase+trim at the schema level, same reasoning as User.email —
+        // see normalizeEmail.js.
         email: {
             type: String,
-            required: true
+            required: true,
+            lowercase: true,
+            trim: true
         },
 
         otp: {
